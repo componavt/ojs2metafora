@@ -1,12 +1,24 @@
 import logging
 import re
 from lxml import etree
-from src.db_connector import get_connection
-from src.fetch_article import fetch_article_metadata, get_setting
-from src.xml_generator import build_article_element
+from db_connector import get_connection
+from fetch_article import fetch_article_metadata, get_setting
+from xml_generator import build_article_element
 
 
 logger = logging.getLogger(__name__)
+
+SERIES_MAP = {
+    'biogeo':   'biogeo',
+    'ecol':     'ecology',
+    'limnol':   'limnology',
+    'expbio':   'biology',
+    'geoldoc':  'precambrian',
+    'mathem':   'mathem',
+    'thematic': 'thematic',
+    'human':    'humanities',
+    'region':   'economy',
+}
 
 
 def fetch_issue_article_ids(issue_id: int) -> list[dict]:
@@ -34,9 +46,9 @@ def fetch_issue_article_ids(issue_id: int) -> list[dict]:
         result = []
         for row in rows:
             result.append({
-                'article_id': row[0],
-                'seq': row[1],
-                'section_id': row[2]
+                'article_id': row['article_id'],
+                'seq': row['seq'],
+                'section_id': row['section_id']
             })
         
         return result
@@ -67,13 +79,21 @@ def fetch_issue_metadata(issue_id: int) -> dict:
             raise ValueError(f"Issue with ID {issue_id} not found")
         
         issue_data = {
-            'issue_id': issue_row[0],
-            'journal_id': issue_row[1],
-            'volume': issue_row[2],
-            'number': issue_row[3],
-            'year': issue_row[4],
-            'date_published': issue_row[5]
+            'issue_id': issue_row['issue_id'],
+            'journal_id': issue_row['journal_id'],
+            'volume': issue_row['volume'],
+            'number': issue_row['number'],
+            'year': issue_row['year'],
+            'date_published': issue_row['date_published']
         }
+        
+        # Fetch journal path
+        journal_path_query = """
+            SELECT path FROM journals WHERE journal_id = %s
+        """
+        cursor.execute(journal_path_query, (issue_data['journal_id'],))
+        journal_path_row = cursor.fetchone()
+        issue_data['journal_path'] = journal_path_row['path'] if journal_path_row else ''
         
         # Fetch journal settings
         journal_query = """
@@ -88,7 +108,9 @@ def fetch_issue_metadata(issue_id: int) -> dict:
         # Process journal settings
         journal_settings = {}
         for row in journal_settings_rows:
-            setting_name, locale, setting_value = row
+            setting_name = row['setting_name']
+            locale = row['locale']
+            setting_value = row['setting_value']
             if setting_name not in journal_settings:
                 journal_settings[setting_name] = {}
             journal_settings[setting_name][locale] = setting_value
@@ -168,7 +190,9 @@ def get_section_titles(section_id: int):
         
         titles = {}
         for row in rows:
-            setting_name, locale, setting_value = row
+            setting_name = row['setting_name']
+            locale = row['locale']
+            setting_value = row['setting_value']
             if setting_name not in titles:
                 titles[setting_name] = {}
             titles[setting_name][locale] = setting_value
@@ -314,6 +338,11 @@ def build_journal_xml(issue_id: int, titleid: str = ''):
     n_sections = len(processed_sections)
     logger.info(f"Built XML for issue {issue_id}: {n_articles} articles, {n_sections} sections.")
     
-    # Return the complete tree
+    # Return the complete tree and metadata
     tree = etree.ElementTree(root)
-    return tree
+    metadata = {
+        'year': str(year) if year else 'unknown',
+        'journal_path': issue_metadata.get('journal_path', ''),
+        'number': str(number) if number else '0'
+    }
+    return tree, metadata

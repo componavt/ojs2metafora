@@ -14,7 +14,7 @@ from pathlib import Path
 # Add the src directory to the path to allow imports
 sys.path.append(str(Path(__file__).parent))
 
-from issue_builder import build_journal_xml
+from issue_builder import build_journal_xml, SERIES_MAP
 
 
 def main():
@@ -35,15 +35,26 @@ def main():
     )
     
     try:
+        # Ensure schemas directory exists and journal3.xsd is present
+        schemas_dir = Path(__file__).parent.parent / 'schemas'
+        xsd_path = str(schemas_dir / 'journal3.xsd')
+        if args.validate and not Path(xsd_path).exists():
+            # Try relative path as fallback
+            xsd_path = 'schemas/journal3.xsd'
+        
         # Build the journal XML
-        tree = build_journal_xml(args.issue_id, titleid=args.titleid)
+        tree, meta = build_journal_xml(args.issue_id, titleid=args.titleid)
         
-        # Create output directory if it doesn't exist
-        output_dir = Path(args.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        series_name = SERIES_MAP.get(meta.get('journal_path', ''), meta.get('journal_path', 'unknown'))
+        year = meta.get('year', 'unknown')
+        number = meta.get('number', '0')
         
-        # Define output path
-        output_path = output_dir / f'issue_{args.issue_id}.xml'
+        # Create year directory
+        year_dir = Path(args.output_dir) / year
+        year_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Define output path with year and series name
+        output_path = year_dir / f'{series_name}_n{number}.xml'
         
         # Write XML to file
         tree.write(
@@ -58,7 +69,7 @@ def main():
         # Validate if requested
         if args.validate:
             from validator import validate_xml
-            is_valid = validate_xml(str(output_path), 'schemas/journal3.xsd')
+            is_valid = validate_xml(str(output_path), xsd_path)
             
             if is_valid:
                 print("Validation: OK")

@@ -3,7 +3,7 @@ import logging
 from lxml import etree
 from itertools import zip_longest
 from typing import Optional
-from src.fetch_article import get_setting, get_settings_by_name
+from fetch_article import get_setting, get_settings_by_name
 
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,16 @@ def parse_keywords(subject_str: str) -> list:
     if not subject_str:
         return []
     return [kw.strip() for kw in subject_str.split(';') if kw.strip()]
+
+
+def _fmt_date(val):
+    """Return YYYY-MM-DD string from date/datetime/string, or None if falsy."""
+    if not val:
+        return None
+    if hasattr(val, 'strftime'):
+        return val.strftime('%Y-%m-%d')
+    s = str(val)
+    return s[:10] if len(s) >= 10 else s
 
 
 def build_article_element(article_data: dict):
@@ -90,7 +100,20 @@ def build_article_element(article_data: dict):
     # Pair authors by position
     author_pairs = zip_longest(ru_authors, en_authors, fillvalue=None)
     
-    author_settings = article_data.get('author_settings', {})
+    # Convert flat list [{author_id, locale, setting_name, setting_value}, ...]
+    # to nested dict {author_id: {setting_name: {locale: value}}}
+    author_settings_raw = article_data.get('author_settings', [])
+    author_settings = {}
+    for _row in author_settings_raw:
+        _aid  = _row['author_id']
+        _name = _row['setting_name']
+        _loc  = _row.get('locale') or ''
+        _val  = _row.get('setting_value') or ''
+        if _aid not in author_settings:
+            author_settings[_aid] = {}
+        if _name not in author_settings[_aid]:
+            author_settings[_aid][_name] = {}
+        author_settings[_aid][_name][_loc] = _val
     
     for idx, (ru_author, en_author) in enumerate(author_pairs, 1):
         # Determine which author ID to use for the author element
@@ -187,11 +210,14 @@ def build_article_element(article_data: dict):
         # Add authorCodes with ORCID if available (preferably from Russian author)
         orcid_author = ru_author if ru_author else en_author
         if orcid_author:
-            orcid_value = author_settings.get(orcid_author['author_id'], {}).get('orcid', '')
+            orcid_raw = author_settings.get(orcid_author['author_id'], {}).get('orcid', {})
+            if isinstance(orcid_raw, dict):
+                # locale is usually empty string for orcid
+                orcid_value = orcid_raw.get('', '') or next(iter(orcid_raw.values()), '')
+            else:
+                orcid_value = orcid_raw or ''
             if orcid_value:
-                # Strip URL prefix if present
-                orcid_clean = re.sub(r'^https?://orcid\.org/', '', orcid_value)
-                
+                orcid_clean = re.sub(r'^https?://orcid\.org/', '', str(orcid_value)).strip()
                 if orcid_clean:
                     author_codes_elem = etree.SubElement(author_elem, 'authorCodes')
                     orcid_elem = etree.SubElement(author_codes_elem, 'orcid')
@@ -253,30 +279,31 @@ def build_article_element(article_data: dict):
             keyword_elem = etree.SubElement(kwd_group_en, 'keyword')
             keyword_elem.text = keyword
     
-    # Add dates
-    dates_elem = etree.SubElement(article_elem, 'dates')
-    
-    # Date submitted (received)
+    # Add dates (only if at least one date is present)
+    dates_elem = etree.Element('dates')
     date_submitted = article.get('date_submitted')
-    if date_submitted:
+    ds = _fmt_date(date_submitted)
+    if ds:
         date_received_elem = etree.SubElement(dates_elem, 'dateReceived')
-        date_received_elem.text = date_submitted.strftime('%Y-%m-%d')
-    
-    # Date published
-    publication = article_data.get('publication', {})
+        date_received_elem.text = ds
+    publication = article_data.get('publishedinfo') or article_data.get('publication') or {}
     date_published = publication.get('date_published')
-    if date_published:
+    dp = _fmt_date(date_published)
+    if dp:
         date_pub_elem = etree.SubElement(dates_elem, 'datePublication')
-        date_pub_elem.text = date_published.strftime('%Y-%m-%d')
+        date_pub_elem.text = dp
+    if len(dates_elem):  # only append if has children
+        article_elem.append(dates_elem)
     
-    # Add references (citations)
-    references_elem = etree.SubElement(article_elem, 'references')
+    # Add references (citations) — only if non-empty
+    references_elem = etree.Element('references')
     citations = article_data.get('citations', [])
     sorted_citations = sorted(citations, key=lambda x: x['seq'])
-    
     for citation in sorted_citations:
         ref_elem = etree.SubElement(references_elem, 'reference')
         ref_elem.text = citation.get('raw_citation', '')
+    if len(references_elem):  # only append if has children
+        article_elem.append(references_elem)
     
     return article_elem
 
