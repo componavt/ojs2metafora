@@ -9,6 +9,11 @@ from fetch_article import get_setting, get_settings_by_name
 logger = logging.getLogger(__name__)
 
 
+def _s(val) -> str:
+    """Return str(val).strip() safely — handles None and non-string."""
+    return str(val).strip() if val is not None else ''
+
+
 def clean_html(text: str) -> str:
     """Strip HTML tags from abstract/bio text."""
     if not text:
@@ -50,6 +55,40 @@ def _fmt_date(val):
     return s[:10] if len(s) >= 10 else s
 
 
+def detect_art_type(article_data):
+    """
+    Determine artType from OJS section information.
+    Falls back to 'RAR' (Research Article) if no match.
+    """
+    section_settings = article_data.get('sectionsettings', [])
+    titles = []
+    for row in section_settings:
+        if row.get('setting_name') in ('title', 'abbrev'):
+            val = row.get('setting_value') or ''
+            if val:
+                titles.append(val.lower())
+    combined = ' '.join(titles)
+
+    obituary_kw = ('памяти', 'некролог', 'obituary', 'memoriam', 'in memory')
+    editorial_kw = ('редакция', 'редактор', 'editorial', 'от редакции')
+    review_kw = ('обзор', 'review',)
+    short_kw = ('краткое', 'сообщение', 'short report', 'letter')
+
+    for kw in obituary_kw:
+        if kw in combined:
+            return 'OBT'
+    for kw in editorial_kw:
+        if kw in combined:
+            return 'EDI'
+    for kw in review_kw:
+        if kw in combined:
+            return 'REV'
+    for kw in short_kw:
+        if kw in combined:
+            return 'SHR'
+    return 'RAR'
+
+
 def build_article_element(article_data: dict):
     """
     Build and return a single <article> lxml Element from article_data.
@@ -68,17 +107,40 @@ def build_article_element(article_data: dict):
     article_elem = etree.Element('article')
     
     # Add language publication
-    language = article.get('language', '')
+    language = article.get('language') or ''
     if language:
         lang_publ_elem = etree.SubElement(article_elem, 'langPubl')
         lang_publ_elem.text = language[:2]  # Take first 2 characters (e.g., "ru", "en")
     
     # Add pages
-    pages = article.get('pages', '')
+    # Try multiple sources for pages
+    pages = _s(article.get('pages'))
+    if not pages:
+        # Fallback: check article_settings table
+        pages = _s(
+            get_setting(article_data.get('article_settings', []), 'pages', None)
+            or get_setting(article_data.get('article_settings', []), 'pages', 'ru_RU')
+            or get_setting(article_data.get('article_settings', []), 'pages', 'en_US')
+        )
     if pages:
         pages_elem = etree.SubElement(article_elem, 'pages')
         pages_elem.text = parse_pages(pages)
-    
+    else:
+        # Log warning — Metafora will reject this article without <pages>
+        title_ru = get_setting(
+            article_data.get('article_settings', []), 'title', 'ru_RU'
+        ) or get_setting(
+            article_data.get('article_settings', []), 'title', 'en_US'
+        ) or f"article_id={article_data.get('article', {}).get('article_id', '?')}"
+        logger.warning(
+            f"Missing <pages> for: «{title_ru[:80]}» — "
+            f"Metafora will reject this article. Please set pages in OJS."
+        )
+
+    # Always add <artType> — required by Metafora business logic
+    art_type_elem = etree.SubElement(article_elem, 'artType')
+    art_type_elem.text = detect_art_type(article_data)
+
     # Add codes (DOI)
     doi = extract_doi(article_data.get('article_settings', []))
     if doi:
@@ -131,10 +193,10 @@ def build_article_element(article_data: dict):
             
             # Surname in uppercase
             surname_elem = etree.SubElement(ru_individ_info, 'surname')
-            surname_elem.text = ru_author['last_name'].upper()
+            surname_elem.text = (ru_author.get('last_name') or '').upper()
             
             # Initials: first_name + middle_name if present
-            initials_text = ru_author['first_name']
+            initials_text = ru_author.get('first_name') or ''
             if ru_author.get('middle_name'):
                 initials_text += " " + ru_author['middle_name']
             initials_elem = etree.SubElement(ru_individ_info, 'initials')
@@ -152,7 +214,7 @@ def build_article_element(article_data: dict):
             
             # Email
             email_elem = etree.SubElement(ru_individ_info, 'email')
-            email_elem.text = ru_author.get('email', '')
+            email_elem.text = ru_author.get('email') or ''
             
             # Biography in Russian
             ru_bio = author_settings.get(ru_author['author_id'], {}).get('biography', {})
@@ -171,10 +233,10 @@ def build_article_element(article_data: dict):
             
             # Surname in uppercase
             surname_elem = etree.SubElement(en_individ_info, 'surname')
-            surname_elem.text = en_author['last_name'].upper()
+            surname_elem.text = (en_author.get('last_name') or '').upper()
             
             # Initials: first_name + middle_initial if middle_name is present
-            initials_text = en_author['first_name']
+            initials_text = en_author.get('first_name') or ''
             if en_author.get('middle_name'):
                 initials_text += " " + en_author['middle_name'][0] + "."
             initials_elem = etree.SubElement(en_individ_info, 'initials')
@@ -195,7 +257,7 @@ def build_article_element(article_data: dict):
             
             # Email
             email_elem = etree.SubElement(en_individ_info, 'email')
-            email_elem.text = en_author.get('email', '')
+            email_elem.text = en_author.get('email') or ''
             
             # Biography in English
             en_bio = author_settings.get(en_author['author_id'], {}).get('biography', {})

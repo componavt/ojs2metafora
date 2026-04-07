@@ -15,7 +15,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=Path(__file__).parent.parent / '.venv')
+load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
 API_KEY = os.getenv('METAFORA_API_KEY')
 API_BASE = os.getenv('METAFORA_API_BASE', 'https://metafora.rcsi.science/api/v2')
@@ -69,11 +69,11 @@ def poll_status(file_uid, max_wait=120, verbose=False, log_path=None, log_data=N
             print(f"  {resp.text}")
             return []
         data = resp.json().get('data', {})
-        status_code = data.get('status_code')
-        status_text = data.get('status_text', 'Unknown')
+        status_code = data.get('xml', {}).get('status', {}).get('code')
+        status_text = data.get('xml', {}).get('status', {}).get('status_text', 'Unknown')
         print(f"  status: {status_text} ({elapsed}s elapsed)")
         if status_code == 3:
-            article_uids = [a['uid'] for a in data.get('articles', [])]
+            article_uids = [str(a) for a in (data.get('articles') or [])]
             if log_path is not None and log_data is not None and file_path is not None:
                 entry = log_data.get(file_path, {})
                 entry['file_uid'] = file_uid
@@ -135,11 +135,26 @@ def cmd_upload(args):
         sys.exit(1)
     if resp.status_code == 422:
         body = resp.json()
-        errors = body.get('errors', {})
+        message = body.get('message', '')
         desc = body.get('description', '')
-        print(f"Validation error: {desc}")
-        for field, msgs in errors.items():
-            print(f"  {field}: {msgs}")
+        errors = body.get('errors')
+        print(f"Validation error (422):")
+        if message:
+            print(f"  message: {message}")
+        if desc:
+            for line in desc.strip().splitlines():
+                print(f"  {line.strip()}")
+        if errors is not None:
+            if isinstance(errors, dict):
+                for field, msgs in errors.items():
+                    print(f"  {field}: {', '.join(msgs) if isinstance(msgs, list) else msgs}")
+            elif isinstance(errors, list):
+                for err in errors:
+                    print(f"  {err}")
+            else:
+                print(f"  errors: {errors}")
+        if getattr(args, 'verbose', False):
+            print(f"  raw: {body}")
         sys.exit(1)
     if resp.status_code not in (200, 201):
         print(f"ERROR: HTTP {resp.status_code} {resp.reason}")
@@ -194,19 +209,21 @@ def cmd_status(args):
         sys.exit(1)
 
     data = resp.json().get('data', {})
+    xml_status = data.get('xml', {}).get('status', {})
+    pdf_status = data.get('pdf', {}).get('status', {})
+    articles = [str(a) for a in (data.get('articles') or [])]
     print(f"file_uid: {data.get('file_uid')}")
-    print(f"status_code: {data.get('status_code')}")
-    print(f"status_text: {data.get('status_text')}")
-    print(f"pdf_uploaded: {data.get('pdf_uploaded', False)}")
-    articles = data.get('articles', [])
-    print(f"articles: {len(articles)}")
-    for a in articles:
-        print(f"  {a.get('uid')} (signed: {a.get('signed', False)})")
+    print(f"status_code : {xml_status.get('code')}")
+    print(f"status_text : {xml_status.get('status_text')}")
+    print(f"pdf_uploaded: {pdf_status.get('uploaded', False)}")
+    print(f"articles    : {len(articles)}")
+    for uid in articles:
+        print(f"  {uid}")
 
     if file_path and file_path in log_data:
-        log_data[file_path]['status_code'] = data.get('status_code')
-        log_data[file_path]['status_text'] = data.get('status_text')
-        log_data[file_path]['article_uids'] = [a.get('uid') for a in articles]
+        log_data[file_path]['status_code'] = xml_status.get('code')
+        log_data[file_path]['status_text'] = xml_status.get('status_text')
+        log_data[file_path]['article_uids'] = articles
         save_log(LOG_PATH, log_data)
 
 
@@ -260,7 +277,7 @@ def cmd_sign(args):
             print(f"<- {resp.status_code} {resp.reason}")
         if resp.status_code == 200:
             data = resp.json().get('data', {})
-            article_uids = [a['uid'] for a in data.get('articles', [])]
+            article_uids = [str(a) for a in (data.get('articles') or [])]
             if file_path:
                 log_data[file_path]['article_uids'] = article_uids
                 save_log(LOG_PATH, log_data)
@@ -327,7 +344,7 @@ def cmd_check_doi(args):
 
     data = resp.json().get('data', {})
     print(f"Found: {doi}")
-    print(f"  article_uid: {data.get('uid')}")
+    print(f"  article_uid: {data.get('article_uid')}")
     print(f"  signed_at: {data.get('signed_at')}")
     print(f"  created_at: {data.get('created_at')}")
 
@@ -395,11 +412,26 @@ def cmd_upload_all(args):
             continue
         if resp.status_code == 422:
             body = resp.json()
-            errors = body.get('errors', {})
+            message = body.get('message', '')
             desc = body.get('description', '')
-            print(f"Validation error: {desc}")
-            for field, msgs in errors.items():
-                print(f"  {field}: {msgs}")
+            errors = body.get('errors')
+            print(f"Validation error (422):")
+            if message:
+                print(f"  message: {message}")
+            if desc:
+                for line in desc.strip().splitlines():
+                    print(f"  {line.strip()}")
+            if errors is not None:
+                if isinstance(errors, dict):
+                    for field, msgs in errors.items():
+                        print(f"  {field}: {', '.join(msgs) if isinstance(msgs, list) else msgs}")
+                elif isinstance(errors, list):
+                    for err in errors:
+                        print(f"  {err}")
+                else:
+                    print(f"  errors: {errors}")
+            if getattr(args, 'verbose', False):
+                print(f"  raw: {body}")
             continue
         if resp.status_code not in (200, 201):
             print(f"ERROR: HTTP {resp.status_code} {resp.reason}")
