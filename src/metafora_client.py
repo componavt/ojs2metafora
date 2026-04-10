@@ -288,6 +288,57 @@ def cmd_sign(args):
     sign_all(file_uid, article_uids, verbose=args.verbose)
 
 
+def cmd_sign_all(args):
+    year_or_dir = args.YEAR_OR_DIR
+    journal = getattr(args, 'journal', None)
+
+    if os.path.isdir(year_or_dir):
+        base_dir = Path(year_or_dir)
+    else:
+        base_dir = Path(__file__).parent.parent / 'output' / year_or_dir
+
+    if not base_dir.is_dir():
+        print(f"ERROR: Directory not found: {base_dir}")
+        sys.exit(1)
+
+    pattern = f"{journal}_n*.xml" if journal else "*.xml"
+    files = sorted(base_dir.glob(pattern))
+
+    if not files:
+        print(f"No XML files matching '{pattern}' in {base_dir}")
+        sys.exit(0)
+
+    log_data = load_log(LOG_PATH)
+    total = len(files)
+    signed_files = 0
+    total_articles = 0
+    skipped = 0
+
+    for fpath in files:
+        fpath_str = str(fpath)
+        entry = log_data.get(fpath_str)
+        if not entry:
+            print(f"SKIP (not in upload log): {fpath_str}")
+            skipped += 1
+            continue
+        if entry.get('status_code') != 3:
+            print(f"SKIP (not processed, status={entry.get('status_code')}): {fpath_str}")
+            skipped += 1
+            continue
+        article_uids = entry.get('article_uids', [])
+        if not article_uids:
+            print(f"SKIP (no article_uids in log): {fpath_str}")
+            skipped += 1
+            continue
+        print(f"\n--- Signing: {fpath_str} ({len(article_uids)} articles) ---")
+        count = sign_all(entry['file_uid'], article_uids, verbose=args.verbose)
+        total_articles += count
+        signed_files += 1
+
+    print(f"\nSign-all complete: {signed_files}/{total} files, "
+          f"{total_articles} articles signed, {skipped} skipped")
+
+
 def cmd_delete(args):
     log_data = load_log(LOG_PATH)
     file_uid, file_path = resolve_file_uid(args.FILE_OR_UID, log_data, verbose=args.verbose)
@@ -390,9 +441,14 @@ def cmd_upload_all(args):
         fpath_str = str(fpath)
         entry = log_data.get(fpath_str)
         if entry and entry.get('status_code') == 3:
-            print(f"SKIP (already processed): {fpath_str}")
+            article_uids = entry.get('article_uids', [])
+            total_articles += len(article_uids)
             success += 1
-            total_articles += len(entry.get('article_uids', []))
+            if sign and article_uids:
+                print(f"\n--- Signing (already processed): {fpath_str} ---")
+                sign_all(entry['file_uid'], article_uids, verbose=args.verbose)
+            else:
+                print(f"SKIP (already processed): {fpath_str}")
             continue
 
         print(f"\n--- Uploading: {fpath_str} ---")
@@ -503,6 +559,24 @@ def main():
     p_upload_all.add_argument('--dry-run', action='store_true', help='List files without uploading')
     p_upload_all.add_argument('--verbose', action='store_true', help='Print raw HTTP requests/responses')
 
+    p_sign_all = subparsers.add_parser(
+        'sign-all',
+        help='Sign all articles for processed XML files in a year directory'
+    )
+    p_sign_all.add_argument(
+        'YEAR_OR_DIR',
+        help='Year (e.g. 2015) or path to output directory'
+    )
+    p_sign_all.add_argument(
+        '--journal',
+        help='Filter by journal series prefix (e.g. mathem, biogeo)'
+    )
+    p_sign_all.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Print raw HTTP requests/responses'
+    )
+
     args = parser.parse_args()
     global verbose
     verbose = getattr(args, 'verbose', False)
@@ -518,6 +592,7 @@ def main():
         'delete': cmd_delete,
         'check-doi': cmd_check_doi,
         'upload-all': cmd_upload_all,
+        'sign-all': cmd_sign_all,
     }
     commands[args.command](args)
 
