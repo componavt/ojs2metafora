@@ -20,7 +20,11 @@ from issue_builder import build_journal_xml, SERIES_MAP
 def main():
     parser = argparse.ArgumentParser(description='Export OJS issue to Metafora XML format')
     parser.add_argument('issue_id', type=int, help='Integer ID of the OJS issue to export')
-    parser.add_argument('--output-dir', default='output', help='Directory for output files (default: output)')
+    parser.add_argument(
+        '--output-dir',
+        default=str(Path(__file__).parent.parent / 'output'),
+        help='Directory for output files (default: <project_root>/output)'
+    )
     parser.add_argument('--titleid', default='', help='Metaphora titleid value for <titleid> element')
     parser.add_argument('--validate', action='store_true', help='Validate the output XML against journal3.xsd')
     parser.add_argument('--verbose', action='store_true', help='Enable DEBUG-level logging')

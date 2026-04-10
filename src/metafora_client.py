@@ -358,7 +358,8 @@ def cmd_upload_all(args):
     if os.path.isdir(year_or_dir):
         base_dir = Path(year_or_dir)
     else:
-        base_dir = Path('output') / year_or_dir
+        # year_or_dir is a year string like "2025"
+        base_dir = Path(__file__).parent.parent / 'output' / year_or_dir
 
     if not base_dir.is_dir():
         print(f"ERROR: Directory not found: {base_dir}")

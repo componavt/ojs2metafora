@@ -86,84 +86,336 @@ LIMIT 20;
 
 ## The workflow: from OJS to Metafora
 
-All commands are run from the `src/` directory.
+All commands are run from the **project root** directory (`ojs2metafora/`).
 
-### Step 1 — Generate XML from the OJS database
+---
+
+### Mode A — Initial bulk export (one-time, all historical issues)
+
+Use this when loading the entire archive into Metafora for the first time.
+
+**Step A1 — Generate XML for all issues of one journal series**
 
 ```bash
-cd src
+# Generate XML for all published issues of the "mathem" journal series
+python3 src/generate_all.py --journal-path mathem --validate
 
+# With year filter (e.g. only 2020–2025)
+python3 src/generate_all.py --journal-path mathem --year-from 2020 --year-to 2025 --validate
+
+# Preview issue list without generating files
+python3 src/generate_all.py --journal-path mathem --dry-run
+
+# Generate for ALL journal series at once
+python3 src/generate_all.py --all-journals --validate
+```
+
+Output is saved to `output/<year>/<series>_n<number>.xml`.
+
+**Step A2 — Upload all generated XML files for a given year**
+
+```bash
+# Upload all XML files in output/2025/ (skips already-processed files)
+python3 src/metafora_client.py upload-all 2025
+
+# Upload, then automatically sign all articles
+python3 src/metafora_client.py upload-all 2025 --sign
+
+# Upload only the "mathem" series
+python3 src/metafora_client.py upload-all 2025 --journal mathem --sign
+
+# Preview what would be uploaded (no actual upload)
+python3 src/metafora_client.py upload-all 2025 --dry-run
+```
+
+---
+
+### Mode B — Periodic update (new issue)
+
+Use this when a new issue has been published in OJS and needs to be exported.
+
+**Step B1 — Generate XML for a single issue**
+
+```bash
 # Basic generation → output/<year>/<series>_n<number>.xml
-python3 main.py 151
+python3 src/main.py 151
 
 # Recommended: generate + validate against journal3.xsd
-python3 main.py 151 --validate
+python3 src/main.py 151 --validate
 
 # With DEBUG-level logging
-python3 main.py 151 --validate --verbose
+python3 src/main.py 151 --validate --verbose
 
 # Explicitly set the Metafora titleid (journal identifier in Metafora)
-python3 main.py 151 --titleid 38962 --validate
+python3 src/main.py 151 --titleid 38962 --validate
 ```
 
-> ⚠️ If you see **WARNING: Missing `<pages>`** for some articles — the `pages` field
-> is empty in OJS. Fill in the page ranges in OJS, then **run the exact same command
-> again**. The script reads fresh data from the database every time; there is no cache.
+> `151` is the `issue_id` from the OJS database (see the `issues` table).
+> Find it in the OJS admin URL or with:
+> ```sql
+> SELECT issue_id, number, year FROM issues ORDER BY year DESC, number DESC LIMIT 10;
+> ```
+
+> ⚠️ If you see **WARNING: Missing `<pages>`** — the `pages` field is empty in OJS.
+> Fill in the page ranges in OJS, then **re-run the same command**.
+> The script reads fresh data from the database every time; there is no cache.
+
+**Step B2 — Upload to Metafora**
 
 ```bash
-# After fixing pages in OJS — just re-run:
-python3 main.py 151 --validate
-```
+# Upload and wait for server processing, then sign all articles
+python3 src/metafora_client.py upload output/2025/mathem_n4.xml --sign
 
-### Step 2 — Upload the XML to Metafora
-
-```bash
-# Upload and wait for the server to finish processing (up to ~2 minutes)
-python3 metafora_client.py upload output/2025/mathem_n4.xml
-
-# Upload and sign all articles automatically when done
-python3 metafora_client.py upload output/2025/mathem_n4.xml --sign
-
-# Upload without waiting (fire and forget)
-python3 metafora_client.py upload output/2025/mathem_n4.xml --no-wait
+# Upload without automatic signing (sign manually in Step B3)
+python3 src/metafora_client.py upload output/2025/mathem_n4.xml
 
 # Upload with full HTTP request/response logging
-python3 metafora_client.py upload output/2025/mathem_n4.xml --verbose
+python3 src/metafora_client.py upload output/2025/mathem_n4.xml --verbose
 ```
 
-> 🚫 A **422 Unprocessable Entity** response means Metafora found data issues in the XML
-> (e.g. missing `<artType>`, missing `<pages>`). Read the error messages, fix the data
-> in OJS or the generator config, regenerate, and re-upload.
+> 🚫 **HTTP 422** means Metafora rejected the XML (e.g. missing `<artType>` or
+> `<pages>`). Read the error list, fix the data in OJS, regenerate, and re-upload.
 
-### Step 3 — Check processing status
+**Step B3 — Sign publications (if not done automatically)**
 
 ```bash
-# Using the XML file path (file_uid is looked up from upload_log.json automatically)
-python3 metafora_client.py status output/2025/mathem_n4.xml
-
-# Using the raw file_uid UUID returned at upload time
-python3 metafora_client.py status xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+python3 src/metafora_client.py sign output/2025/mathem_n4.xml
 ```
 
-### Step 4 — Sign publications
-
-```bash
-python3 metafora_client.py sign output/2025/mathem_n4.xml
-```
+---
 
 ### Other useful commands
 
 ```bash
+# Check processing status (by file path or raw UUID)
+python3 src/metafora_client.py status output/2025/mathem_n4.xml
+python3 src/metafora_client.py status xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
 # Delete a file from Metafora (e.g. to re-upload a corrected version)
-python3 metafora_client.py delete output/2025/mathem_n4.xml
+python3 src/metafora_client.py delete output/2025/mathem_n4.xml
 
 # Check whether a DOI is already registered in Metafora
-python3 metafora_client.py check-doi 10.14529/mmph250101
+python3 src/metafora_client.py check-doi 10.14529/mmph250101
+```
 
-# Batch-upload all XML files for a given year
-python3 metafora_client.py upload-all 2025
-python3 metafora_client.py upload-all 2025 --journal mathem --sign
-python3 metafora_client.py upload-all 2025 --dry-run   # preview only, no uploading
+---
+
+### Mode A — Initial bulk export (one-time, all historical issues)
+
+Use this when loading the entire archive into Metafora for the first time.
+
+**Step A1 — Generate XML for all issues of one journal series**
+
+```bash
+# Generate XML for all published issues of the "mathem" journal series
+python3 src/generate_all.py --journal-path mathem --validate
+
+# With year filter (e.g. only 2020–2025)
+python3 src/generate_all.py --journal-path mathem --year-from 2020 --year-to 2025 --validate
+
+# Preview issue list without generating files
+python3 src/generate_all.py --journal-path mathem --dry-run
+
+# Generate for ALL journal series at once
+python3 src/generate_all.py --all-journals --validate
+```
+
+Output is saved to `output/<year>/<series>_n<number>.xml`.
+
+**Step A2 — Upload all generated XML files for a given year**
+
+```bash
+# Upload all XML files in output/2025/ (skips already-processed files)
+python3 src/metafora_client.py upload-all 2025
+
+# Upload, then automatically sign all articles
+python3 src/metafora_client.py upload-all 2025 --sign
+
+# Upload only the "mathem" series
+python3 src/metafora_client.py upload-all 2025 --journal mathem --sign
+
+# Preview what would be uploaded (no actual upload)
+python3 src/metafora_client.py upload-all 2025 --dry-run
+```
+
+---
+
+### Mode B — Periodic update (new issue)
+
+Use this when a new issue has been published in OJS and needs to be exported.
+
+**Step B1 — Generate XML for a single issue**
+
+```bash
+# Basic generation → output/<year>/<series>_n<number>.xml
+python3 src/main.py 151
+
+# Recommended: generate + validate against journal3.xsd
+python3 src/main.py 151 --validate
+
+# With DEBUG-level logging
+python3 src/main.py 151 --validate --verbose
+
+# Explicitly set the Metafora titleid (journal identifier in Metafora)
+python3 src/main.py 151 --titleid 38962 --validate
+```
+
+> `151` is the `issue_id` from the OJS database (see the `issues` table).
+> Find it in the OJS admin URL or with:
+> ```sql
+> SELECT issue_id, number, year FROM issues ORDER BY year DESC, number DESC LIMIT 10;
+> ```
+
+> ⚠️ If you see **WARNING: Missing `<pages>`** — the `pages` field is empty in OJS.
+> Fill in the page ranges in OJS, then **re-run the same command**.
+> The script reads fresh data from the database every time; there is no cache.
+
+**Step B2 — Upload to Metafora**
+
+```bash
+# Upload and wait for server processing, then sign all articles
+python3 src/metafora_client.py upload output/2025/mathem_n4.xml --sign
+
+# Upload without automatic signing (sign manually in Step B3)
+python3 src/metafora_client.py upload output/2025/mathem_n4.xml
+
+# Upload with full HTTP request/response logging
+python3 src/metafora_client.py upload output/2025/mathem_n4.xml --verbose
+```
+
+> 🚫 **HTTP 422** means Metafora rejected the XML (e.g. missing `<artType>` or
+> `<pages>`). Read the error list, fix the data in OJS, regenerate, and re-upload.
+
+**Step B3 — Sign publications (if not done automatically)**
+
+```bash
+python3 src/metafora_client.py sign output/2025/mathem_n4.xml
+```
+
+---
+
+### Other useful commands
+
+```bash
+# Check processing status (by file path or raw UUID)
+python3 src/metafora_client.py status output/2025/mathem_n4.xml
+python3 src/metafora_client.py status xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Delete a file from Metafora (e.g. to re-upload a corrected version)
+python3 src/metafora_client.py delete output/2025/mathem_n4.xml
+
+# Check whether a DOI is already registered in Metafora
+python3 src/metafora_client.py check-doi 10.14529/mmph250101
+```
+
+---
+
+### Mode A — Initial bulk export (one-time, all historical issues)
+
+Use this when loading the entire archive into Metafora for the first time.
+
+**Step A1 — Generate XML for all issues of one journal series**
+
+```bash
+# Generate XML for all published issues of the "mathem" journal series
+python3 src/generate_all.py --journal-path mathem --validate
+
+# With year filter (e.g. only 2020–2025)
+python3 src/generate_all.py --journal-path mathem --year-from 2020 --year-to 2025 --validate
+
+# Preview issue list without generating files
+python3 src/generate_all.py --journal-path mathem --dry-run
+
+# Generate for ALL journal series at once
+python3 src/generate_all.py --all-journals --validate
+```
+
+Output is saved to `output/<year>/<series>_n<number>.xml`.
+
+**Step A2 — Upload all generated XML files for a given year**
+
+```bash
+# Upload all XML files in output/2025/ (skips already-processed files)
+python3 src/metafora_client.py upload-all 2025
+
+# Upload, then automatically sign all articles
+python3 src/metafora_client.py upload-all 2025 --sign
+
+# Upload only the "mathem" series
+python3 src/metafora_client.py upload-all 2025 --journal mathem --sign
+
+# Preview what would be uploaded (no actual upload)
+python3 src/metafora_client.py upload-all 2025 --dry-run
+```
+
+---
+
+### Mode B — Periodic update (new issue)
+
+Use this when a new issue has been published in OJS and needs to be exported.
+
+**Step B1 — Generate XML for a single issue**
+
+```bash
+# Basic generation → output/<year>/<series>_n<number>.xml
+python3 src/main.py 151
+
+# Recommended: generate + validate against journal3.xsd
+python3 src/main.py 151 --validate
+
+# With DEBUG-level logging
+python3 src/main.py 151 --validate --verbose
+
+# Explicitly set the Metafora titleid (journal identifier in Metafora)
+python3 src/main.py 151 --titleid 38962 --validate
+```
+
+> `151` is the `issue_id` from the OJS database (see the `issues` table).
+> Find it in the OJS admin URL or with:
+> ```sql
+> SELECT issue_id, number, year FROM issues ORDER BY year DESC, number DESC LIMIT 10;
+> ```
+
+> ⚠️ If you see **WARNING: Missing `<pages>`** — the `pages` field is empty in OJS.
+> Fill in the page ranges in OJS, then **re-run the same command**.
+> The script reads fresh data from the database every time; there is no cache.
+
+**Step B2 — Upload to Metafora**
+
+```bash
+# Upload and wait for server processing, then sign all articles
+python3 src/metafora_client.py upload output/2025/mathem_n4.xml --sign
+
+# Upload without automatic signing (sign manually in Step B3)
+python3 src/metafora_client.py upload output/2025/mathem_n4.xml
+
+# Upload with full HTTP request/response logging
+python3 src/metafora_client.py upload output/2025/mathem_n4.xml --verbose
+```
+
+> 🚫 **HTTP 422** means Metafora rejected the XML (e.g. missing `<artType>` or
+> `<pages>`). Read the error list, fix the data in OJS, regenerate, and re-upload.
+
+**Step B3 — Sign publications (if not done automatically)**
+
+```bash
+python3 src/metafora_client.py sign output/2025/mathem_n4.xml
+```
+
+---
+
+### Other useful commands
+
+```bash
+# Check processing status (by file path or raw UUID)
+python3 src/metafora_client.py status output/2025/mathem_n4.xml
+python3 src/metafora_client.py status xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Delete a file from Metafora (e.g. to re-upload a corrected version)
+python3 src/metafora_client.py delete output/2025/mathem_n4.xml
+
+# Check whether a DOI is already registered in Metafora
+python3 src/metafora_client.py check-doi 10.14529/mmph250101
 ```
 
 ---

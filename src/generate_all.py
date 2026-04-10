@@ -74,23 +74,28 @@ def main():
     parser = argparse.ArgumentParser(
         description='Generate Metaphora XML files for ALL published issues of a journal'
     )
-    group = parser.add_mutually_exclusive_group()
+    group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument('--journal-path', help='OJS journal path (e.g. "mathem", "biogeo")')
     group.add_argument('--journal-id', type=int, help='OJS journal_id integer')
-    parser.add_argument('--output-dir', default='output', help='Base output directory (default: output)')
+    parser.add_argument('--output-dir', default=str(Path(__file__).parent.parent / 'output'), help='Base output directory (default: <project_root>/output)')
     parser.add_argument('--titleid', default='', help='Metaphora titleid string (default: empty)')
     parser.add_argument('--validate', action='store_true', help='Validate each XML against schemas/journal3.xsd')
     parser.add_argument('--year-from', type=int, help='Only process issues from this year onward')
     parser.add_argument('--year-to', type=int, help='Only process issues up to this year inclusive')
     parser.add_argument('--verbose', action='store_true', help='Enable DEBUG logging')
     parser.add_argument('--dry-run', action='store_true', help='Print issue list without generating files')
+    parser.add_argument(
+        '--all-journals',
+        action='store_true',
+        help='Process ALL journals defined in SERIES_MAP'
+    )
 
     args = parser.parse_args()
 
-    # Validate that at least one of --journal-path or --journal-id is provided
-    if args.journal_path is None and args.journal_id is None:
+    # Validate that at least one of --journal-path, --journal-id, or --all-journals is provided
+    if not args.all_journals and args.journal_path is None and args.journal_id is None:
         parser.print_usage()
-        print("error: at least one of --journal-path or --journal-id is required")
+        print("error: one of --journal-path, --journal-id or --all-journals is required")
         sys.exit(1)
 
     # Configure logging
@@ -100,121 +105,213 @@ def main():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
-    # Resolve journal_id and journal_path
-    journal_id = args.journal_id
-    journal_path = args.journal_path
-
-    if journal_id is None:
-        # Resolve journal_id from journal_path
+    if args.all_journals:
         conn = get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "SELECT journal_id, path FROM journals WHERE path = %s",
-                (journal_path,)
+                "SELECT journal_id, path FROM journals WHERE enabled = 1 ORDER BY path ASC"
             )
-            row = cursor.fetchone()
-            if not row:
-                logging.error(f"Journal with path '{journal_path}' not found in DB")
-                sys.exit(1)
+            journals = cursor.fetchall()
+        finally:
+            cursor.close()
+            conn.close()
+
+        grand_total = 0
+        grand_success = 0
+        grand_failures = 0
+        journal_count = len(journals)
+
+        if args.dry_run:
+            for row in journals:
+                j_id = row['journal_id']
+                j_path = row['path']
+                issues = fetch_all_issues(journal_id=j_id, year_from=args.year_from, year_to=args.year_to)
+                for issue in issues:
+                    print(f"  {j_path}: issue_id={issue['issue_id']}  year={issue['year']}  n={issue['number']}")
+            sys.exit(0)
+
+        schemas_dir = Path(__file__).parent.parent / 'schemas'
+        xsd_path = str(schemas_dir / 'journal3.xsd')
+        if args.validate and not Path(xsd_path).exists():
+            xsd_path = 'schemas/journal3.xsd'
+
+        for row in journals:
             journal_id = row['journal_id']
-        finally:
-            cursor.close()
-            conn.close()
-    elif journal_path is None:
-        # Resolve journal_path from journal_id
-        conn = get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "SELECT journal_id, path FROM journals WHERE journal_id = %s",
-                (journal_id,)
-            )
-            row = cursor.fetchone()
-            if not row:
-                logging.error(f"Journal with id {journal_id} not found in DB")
-                sys.exit(1)
             journal_path = row['path']
-        finally:
-            cursor.close()
-            conn.close()
+            try:
+                issues = fetch_all_issues(journal_id=journal_id, year_from=args.year_from, year_to=args.year_to)
+            except Exception as e:
+                logging.error(f"Failed to fetch issues for {journal_path}: {e}", exc_info=True)
+                print(f"Processing journal: {journal_path} (id={journal_id}) — 0 issues (error)")
+                grand_failures += len(issues) if 'issues' in dir() else 0
+                continue
 
-    # Fetch all issues
-    try:
-        issues = fetch_all_issues(
-            journal_id=journal_id,
-            journal_path=journal_path,
-            year_from=args.year_from,
-            year_to=args.year_to
-        )
-    except Exception as e:
-        logging.error(f"Failed to fetch issues: {e}", exc_info=True)
-        sys.exit(1)
+            print(f"Processing journal: {journal_path} (id={journal_id}) — {len(issues)} issues")
 
-    print(f"Found {len(issues)} issues for '{journal_path}' (id={journal_id})")
+            total = len(issues)
+            success = 0
+            failures = 0
 
-    # Dry run: just print the issue list
-    if args.dry_run:
-        for row in issues:
-            print(f"  issue_id={row['issue_id']}  year={row['year']}  n={row['number']}")
-        sys.exit(0)
+            for issue_info in issues:
+                issue_id = issue_info['issue_id']
+                try:
+                    logger.info(f"Processing issue_id={issue_id} year={issue_info['year']} n={issue_info['number']}...")
 
-    # Set up XSD path for validation
-    schemas_dir = Path(__file__).parent.parent / 'schemas'
-    xsd_path = str(schemas_dir / 'journal3.xsd')
-    if args.validate and not Path(xsd_path).exists():
-        xsd_path = 'schemas/journal3.xsd'
+                    tree, meta = build_journal_xml(issue_id, titleid=args.titleid)
 
-    # Process each issue
-    total = len(issues)
-    success = 0
-    failures = 0
+                    series_name = SERIES_MAP.get(meta.get('journal_path', ''), meta.get('journal_path', 'unknown'))
+                    year = meta.get('year', 'unknown')
+                    number = meta.get('number', '0')
 
-    for issue_info in issues:
-        issue_id = issue_info['issue_id']
-        try:
-            logger.info(f"Processing issue_id={issue_id} year={issue_info['year']} n={issue_info['number']}...")
+                    year_dir = Path(args.output_dir) / year
+                    year_dir.mkdir(parents=True, exist_ok=True)
+                    output_path = year_dir / f'{series_name}_n{number}.xml'
 
-            tree, meta = build_journal_xml(issue_id, titleid=args.titleid)
+                    tree.write(
+                        str(output_path),
+                        encoding='utf-8',
+                        xml_declaration=True,
+                        pretty_print=True
+                    )
 
-            series_name = SERIES_MAP.get(meta.get('journal_path', ''), meta.get('journal_path', 'unknown'))
-            year = meta.get('year', 'unknown')
-            number = meta.get('number', '0')
+                    logger.info(f"Saved: {output_path}")
 
-            year_dir = Path(args.output_dir) / year
-            year_dir.mkdir(parents=True, exist_ok=True)
-            output_path = year_dir / f'{series_name}_n{number}.xml'
+                    if args.validate:
+                        from validator import validate_xml
+                        is_valid = validate_xml(str(output_path), xsd_path)
+                        if is_valid:
+                            logger.info(f"Validation PASS: {output_path}")
+                        else:
+                            logger.warning(f"Validation FAIL: {output_path}")
 
-            tree.write(
-                str(output_path),
-                encoding='utf-8',
-                xml_declaration=True,
-                pretty_print=True
-            )
+                    success += 1
 
-            logger.info(f"Saved: {output_path}")
+                except Exception as e:
+                    logger.error(f"Error processing issue_id={issue_id}: {e}", exc_info=True)
+                    failures += 1
+                    continue
 
-            if args.validate:
-                from validator import validate_xml
-                is_valid = validate_xml(str(output_path), xsd_path)
-                if is_valid:
-                    logger.info(f"Validation PASS: {output_path}")
-                else:
-                    logger.warning(f"Validation FAIL: {output_path}")
+            grand_total += total
+            grand_success += success
+            grand_failures += failures
 
-            success += 1
+        print(f"Grand total: {journal_count} journals, {grand_success} issues processed, {grand_failures} failures")
 
-        except Exception as e:
-            logger.error(f"Error processing issue_id={issue_id}: {e}", exc_info=True)
-            failures += 1
-            continue
+        if grand_failures > 0:
+            sys.exit(1)
+        else:
+            sys.exit(0)
 
-    print(f"Done: {success}/{total} files generated to {args.output_dir}/")
-
-    if failures > 0:
-        sys.exit(1)
     else:
-        sys.exit(0)
+        journal_id = args.journal_id
+        journal_path = args.journal_path
+
+        if journal_id is None:
+            conn = get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "SELECT journal_id, path FROM journals WHERE path = %s",
+                    (journal_path,)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    logging.error(f"Journal with path '{journal_path}' not found in DB")
+                    sys.exit(1)
+                journal_id = row['journal_id']
+            finally:
+                cursor.close()
+                conn.close()
+        elif journal_path is None:
+            conn = get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "SELECT journal_id, path FROM journals WHERE journal_id = %s",
+                    (journal_id,)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    logging.error(f"Journal with id {journal_id} not found in DB")
+                    sys.exit(1)
+                journal_path = row['path']
+            finally:
+                cursor.close()
+                conn.close()
+
+        try:
+            issues = fetch_all_issues(
+                journal_id=journal_id,
+                journal_path=journal_path,
+                year_from=args.year_from,
+                year_to=args.year_to
+            )
+        except Exception as e:
+            logging.error(f"Failed to fetch issues: {e}", exc_info=True)
+            sys.exit(1)
+
+        print(f"Found {len(issues)} issues for '{journal_path}' (id={journal_id})")
+
+        if args.dry_run:
+            for row in issues:
+                print(f"  issue_id={row['issue_id']}  year={row['year']}  n={row['number']}")
+            sys.exit(0)
+
+        schemas_dir = Path(__file__).parent.parent / 'schemas'
+        xsd_path = str(schemas_dir / 'journal3.xsd')
+        if args.validate and not Path(xsd_path).exists():
+            xsd_path = 'schemas/journal3.xsd'
+
+        total = len(issues)
+        success = 0
+        failures = 0
+
+        for issue_info in issues:
+            issue_id = issue_info['issue_id']
+            try:
+                logger.info(f"Processing issue_id={issue_id} year={issue_info['year']} n={issue_info['number']}...")
+
+                tree, meta = build_journal_xml(issue_id, titleid=args.titleid)
+
+                series_name = SERIES_MAP.get(meta.get('journal_path', ''), meta.get('journal_path', 'unknown'))
+                year = meta.get('year', 'unknown')
+                number = meta.get('number', '0')
+
+                year_dir = Path(args.output_dir) / year
+                year_dir.mkdir(parents=True, exist_ok=True)
+                output_path = year_dir / f'{series_name}_n{number}.xml'
+
+                tree.write(
+                    str(output_path),
+                    encoding='utf-8',
+                    xml_declaration=True,
+                    pretty_print=True
+                )
+
+                logger.info(f"Saved: {output_path}")
+
+                if args.validate:
+                    from validator import validate_xml
+                    is_valid = validate_xml(str(output_path), xsd_path)
+                    if is_valid:
+                        logger.info(f"Validation PASS: {output_path}")
+                    else:
+                        logger.warning(f"Validation FAIL: {output_path}")
+
+                success += 1
+
+            except Exception as e:
+                logger.error(f"Error processing issue_id={issue_id}: {e}", exc_info=True)
+                failures += 1
+                continue
+
+        print(f"Done: {success}/{total} files generated to {args.output_dir}/")
+
+        if failures > 0:
+            sys.exit(1)
+        else:
+            sys.exit(0)
 
 
 if __name__ == "__main__":
