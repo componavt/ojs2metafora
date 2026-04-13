@@ -30,7 +30,8 @@ ojs2metafora/
 │   ├── validator.py        # Validates generated XML against journal3.xsd
 │   ├── metafora_client.py  # CLI client for the Metafora REST API
 │   ├── explore_db.py       # Interactive DB explorer / sanity checker
-│   └── generate_all.py     # Batch XML generation for all issues
+│   ├── generate_all.py     # Batch XML generation for all issues
+│   └── runtest.sh          # Developer smoke-test script (chmod +x applied)
 └── output/
     └── 2025/
         └── mathem_n4.xml   # Example generated file (year / series_nNUMBER.xml)
@@ -87,109 +88,6 @@ LIMIT 20;
 ## The workflow: from OJS to Metafora
 
 All commands are run from the **project root** (`ojs2metafora/`).
-
----
-
-### Mode A — Initial bulk export (one-time, all historical issues)
-
-**Step A1 — Generate XML for all issues**
-
-```bash
-# All journal series at once (recommended for first-time export)
-python3 src/generate_all.py --all-journals --validate
-
-# Only one series, with optional year filter
-python3 src/generate_all.py --journal-path mathem --validate
-python3 src/generate_all.py --journal-path mathem --year-from 2020 --validate
-
-# Preview list of issues without generating files
-python3 src/generate_all.py --all-journals --dry-run
-```
-
-Output: `output/<year>/<series>_n<number>.xml`
-
-**Step A2 — Upload all generated XML files**
-
-```bash
-# Upload all files for a year and sign automatically (recommended)
-python3 src/metafora_client.py upload-all 2015 --sign
-
-# Upload only one journal series
-python3 src/metafora_client.py upload-all 2015 --journal mathem --sign
-
-# Preview which files would be uploaded (no actual upload)
-python3 src/metafora_client.py upload-all 2015 --dry-run
-```
-
-**Step A3 — Sign uploaded articles (if `--sign` was omitted in Step A2)**
-
-```bash
-# Sign all articles for all files in a year
-python3 src/metafora_client.py sign-all 2015
-
-# Sign only one journal series
-python3 src/metafora_client.py sign-all 2015 --journal mathem
-```
-
-> `sign-all` is idempotent: already-signed articles return HTTP 409,
-> which is treated as success. Safe to re-run.
-
----
-
-### Mode B — Periodic update (single new issue)
-
-**Step B1 — Generate XML**
-
-```bash
-python3 src/main.py 151 --validate
-python3 src/main.py 151 --titleid 38962 --validate
-python3 src/main.py 151 --validate --verbose
-```
-
-> `151` is the `issue_id` from the OJS `issues` table.
-> Find it with:
-> ```sql
-> SELECT issue_id, number, year FROM issues
-> ORDER BY year DESC, number DESC LIMIT 10;
-> ```
-
-> ⚠️ **WARNING: Missing `<pages>`** — fill in page ranges in OJS,
-> then re-run the same command. No cache; always reads fresh from DB.
-
-**Step B2 — Upload to Metafora**
-
-```bash
-# Upload, wait for processing, then sign automatically
-python3 src/metafora_client.py upload output/2025/mathem_n4.xml --sign
-
-# Upload with full HTTP logging
-python3 src/metafora_client.py upload output/2025/mathem_n4.xml --verbose
-```
-
-> 🚫 **HTTP 422** — Metafora rejected the XML (e.g. missing `<artType>`
-> or `<pages>`). Read the error list, fix in OJS, regenerate, re-upload.
-
-**Step B3 — Sign (if `--sign` was omitted in Step B2)**
-
-```bash
-python3 src/metafora_client.py sign output/2025/mathem_n4.xml
-```
-
----
-
-### Other useful commands
-
-```bash
-# Check processing status (by file path or raw UUID)
-python3 src/metafora_client.py status output/2025/mathem_n4.xml
-python3 src/metafora_client.py status xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-
-# Delete a file from Metafora (e.g. to re-upload a corrected version)
-python3 src/metafora_client.py delete output/2025/mathem_n4.xml
-
-# Check whether a DOI is already registered in Metafora
-python3 src/metafora_client.py check-doi 10.14529/mmph250101
-```
 
 ---
 
