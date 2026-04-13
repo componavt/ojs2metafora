@@ -19,6 +19,7 @@
 ```
 ojs2metafora/
 ├── .env                    # Secrets: Metafora API key + DB credentials
+├── .env.example            # Template for .env (committed to git)
 ├── schemas/
 │   └── journal3.xsd        # Metafora XSD schema (copy here manually once)
 ├── src/
@@ -49,13 +50,17 @@ pip install -r requirements.txt
 
 ### 2. Create `.env` in the project root
 
+```bash
+cp .env.example .env
+```
+
 ```ini
 # OJS database
 DB_HOST=localhost
-DB_PORT=3306
-DB_NAME=ojs_db
 DB_USER=ojs_user
-DB_PASS=secret
+DB_PASSWORD=your_password
+DB_NAME=ojs_local
+DB_CHARSET=utf8mb4
 
 # Metafora API
 METAFORA_API_KEY=your_api_key_here
@@ -246,7 +251,7 @@ you don't have to track UUIDs by hand.
 | `pymysql` | MySQL connection to OJS database |
 | `requests` | HTTP calls to the Metafora REST API |
 | `python-dotenv` | Loading secrets from `.env` |
-| `tabulate` | Pretty-printing reports in `fetch_article.py` |
+| `tabulate` | Pretty-printing DB reports in `explore_db.py` |
 
 ---
 
