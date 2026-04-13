@@ -31,7 +31,7 @@ ojs2metafora/
 │   ├── metafora_client.py  # CLI client for the Metafora REST API
 │   ├── explore_db.py       # Interactive DB explorer / sanity checker
 │   ├── generate_all.py     # Batch XML generation for all issues
-│   └── runtest.sh          # Developer smoke-test script (chmod +x applied)
+│   └── run_test.sh         # Developer smoke-test script (chmod +x applied)
 └── output/
     └── 2025/
         └── mathem_n4.xml   # Example generated file (year / series_nNUMBER.xml)
