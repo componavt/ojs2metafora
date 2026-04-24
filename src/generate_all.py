@@ -144,7 +144,7 @@ def main():
             except Exception as e:
                 logging.error(f"Failed to fetch issues for {journal_path}: {e}", exc_info=True)
                 print(f"Processing journal: {journal_path} (id={journal_id}) — 0 issues (error)")
-                grand_failures += len(issues) if 'issues' in dir() else 0
+                grand_failures += 0
                 continue
 
             print(f"Processing journal: {journal_path} (id={journal_id}) — {len(issues)} issues")

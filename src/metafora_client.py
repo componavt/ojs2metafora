@@ -53,17 +53,17 @@ def poll_status(file_uid, max_wait=120, verbose=False, log_path=None, log_data=N
     elapsed = 0
     while elapsed < max_wait:
         t0 = time.time()
-        if verbose:
-            url = f"{API_BASE}/files/status/?file_uid={file_uid}"
-            print(f"-> GET {url}")
-        resp = requests.get(
-            f"{API_BASE}/files/status/",
-            params={'file_uid': file_uid},
+    if getattr(args, 'verbose', False):
+        print(f"-> POST {API_BASE}/files/journal/")
+    with open(file_path, 'rb') as f:
+        resp = requests.post(
+            f"{API_BASE}/files/journal/",
+            files={'xml': f},
             headers=HEADERS,
             timeout=30
         )
-        if verbose:
-            print(f"<- {resp.status_code} {resp.reason}")
+    if getattr(args, 'verbose', False):
+        print(f"<- {resp.status_code} {resp.reason}")
         if resp.status_code != 200:
             print(f"  ERROR: HTTP {resp.status_code} {resp.reason}")
             print(f"  {resp.text}")
@@ -118,7 +118,7 @@ def cmd_upload(args):
             print("Skipped.")
             return
 
-    if verbose:
+    if getattr(args, 'verbose', False):
         print(f"-> POST {API_BASE}/files/journal/")
     with open(file_path, 'rb') as f:
         resp = requests.post(
@@ -127,7 +127,7 @@ def cmd_upload(args):
             headers=HEADERS,
             timeout=30
         )
-    if verbose:
+    if getattr(args, 'verbose', False):
         print(f"<- {resp.status_code} {resp.reason}")
 
     if resp.status_code == 403:

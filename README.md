@@ -2,9 +2,12 @@
 
 > *Because manually copy-pasting journal metadata is a crime against humanity.*
 
-📚 Extracts article metadata from an **OJS 2.4** MySQL database, transforms it into
+Extracts article metadata from an **OJS 2.4** MySQL database, transforms it into
 `journal3.xsd`-compliant XML, and ships it to the
 [Metafora](https://metafora.rcsi.science/) indexing system (RCSI, Russia) via REST API.
+
+Also supports generating a second XML target for **journals.rcsi.science / RCSI elibrary**
+from already-generated Metafora XML and a prepared issue directory.
 
 ## What it does
 
@@ -32,6 +35,7 @@ ojs2metafora/
 │   ├── metafora_client.py  # CLI client for the Metafora REST API
 │   ├── explore_db.py       # Interactive DB explorer / sanity checker
 │   ├── generate_all.py     # Batch XML generation for all issues
+│   ├── xml2elibrary.py     # Convert Metafora XML → RCSI elibrary XML
 │   └── run_test.sh         # Developer smoke-test script (chmod +x applied)
 └── output/
     └── 2025/
@@ -180,6 +184,52 @@ python3 src/metafora_client.py upload output/2025/mathem_n4.xml --verbose
 ```bash
 python3 src/metafora_client.py sign output/2025/mathem_n4.xml
 ```
+
+---
+
+### Mode C — Generate RCSI elibrary XML from existing Metafora XML
+
+This mode converts an already-generated Metafora issue XML into the RCSI elibrary-compatible
+format. It requires a **prepared issue directory** that contains article PDFs (named with
+numeric prefixes like `01 Article.pdf`), the combined `PDF all.pdf`, and optionally a cover
+image. The script generates only the XML — it does not modify or move any files.
+
+**Step C1 — Generate the elibrary XML**
+
+```bash
+python3 src/xml2elibrary.py \
+    output/2025/precambrian_n5.xml \
+    output/journals.rcsi.science/2025/1997-3217_2025_5 \
+    --output output/journals.rcsi.science/2025/1997-3217_2025_5/1997-3217_2025_5.xml \
+    --validate --verbose
+```
+
+Parameters:
+
+| Parameter | Description |
+|---|---|
+| `source_xml` (positional) | Path to the existing Metafora XML file |
+| `issue_dir` (positional) | Path to the prepared issue directory containing PDFs |
+| `--output`, `-o` | Output XML file path. If omitted, auto-generated from ISSN/year/number |
+| `--validate` | Validate the output against `schemas/journal3.xsd` |
+| `--xsd-path` | Custom path to the XSD schema (default: `schemas/journal3.xsd`) |
+| `--verbose`, `-v` | Enable debug logging |
+
+What the script does:
+
+1. Parses the source Metafora XML.
+2. Scans the issue directory for article PDFs with numeric prefixes (e.g. `01 Author.pdf`).
+3. Matches PDFs to articles by position and page order.
+4. Converts language codes from 2-letter (`ru`, `en`) to 3-letter RCSI style (`RUS`, `ENG`).
+5. Adds `<files>` elements with PDF filenames to each `<article>`.
+6. Writes the elibrary XML to the specified output path.
+
+Notes:
+
+- `PDF all.pdf` and cover JPEGs are **excluded** from the XML.
+- If PDF-to-article matching is imperfect, the script logs warnings but still writes the output.
+- Language codes are converted in `<langPubl>`, `lang` attributes on `<journalInfo>`,
+  `<secTitle>`, `<individInfo>`, `<artTitle>`, `<kwdGroup>`, and `<file>` elements.
 
 ---
 

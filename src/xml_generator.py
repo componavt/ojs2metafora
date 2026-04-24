@@ -60,7 +60,7 @@ def detect_art_type(article_data):
     Determine artType from OJS section information.
     Falls back to 'RAR' (Research Article) if no match.
     """
-    section_settings = article_data.get('sectionsettings', [])
+    section_settings = article_data.get('section_settings', [])
     titles = []
     for row in section_settings:
         if row.get('setting_name') in ('title', 'abbrev'):
