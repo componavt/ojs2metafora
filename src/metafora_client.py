@@ -24,6 +24,8 @@ HEADERS = {'Api-Key': API_KEY}
 
 LOG_PATH = Path(__file__).parent.parent / 'output' / 'upload_log.json'
 
+current_op = {'file_path': None, 'file_uid': None}
+
 
 def load_log(log_path):
     if log_path.exists():
@@ -38,68 +40,158 @@ def save_log(log_path, log_data):
         json.dump(log_data, f, indent=2)
 
 
+def normalize_xml_path(path_value: str) -> str:
+    """Return one canonical string representation for a local XML path."""
+    return str(Path(path_value).resolve())
+
+
 def resolve_file_uid(file_or_uid, log_data, verbose=False):
+    normalized = normalize_xml_path(file_or_uid) if os.path.isfile(file_or_uid) else file_or_uid
     if os.path.isfile(file_or_uid):
-        entry = log_data.get(file_or_uid)
+        entry = log_data.get(normalized)
         if entry and 'file_uid' in entry:
             return entry['file_uid'], file_or_uid
-        print(f"ERROR: No upload log entry found for {file_or_uid}")
+        entry = log_data.get(file_or_uid)
+        if entry and 'file_uid' in entry:
+            log_data[normalized] = entry
+            del log_data[file_or_uid]
+            return entry['file_uid'], file_or_uid
+        print(f"ERROR: No upload log entry found for: {file_or_uid}")
+        print("Use the known Metafora file UID instead:")
+        print("  python3 src/metafora_client.py status FILE_UID")
+        print("  python3 src/metafora_client.py sign FILE_UID")
         sys.exit(1)
     return file_or_uid, None
 
 
-def poll_status(file_uid, max_wait=120, verbose=False, log_path=None, log_data=None, file_path=None):
-    interval = 3
-    elapsed = 0
-    while elapsed < max_wait:
-        t0 = time.time()
-    if getattr(args, 'verbose', False):
-        print(f"-> POST {API_BASE}/files/journal/")
-    with open(file_path, 'rb') as f:
-        resp = requests.post(
-            f"{API_BASE}/files/journal/",
-            files={'xml': f},
+def poll_status(file_uid, max_wait=300, interval=5, verbose=False,
+                log_path=None, log_data=None, file_path=None):
+    started_at = time.monotonic()
+    last_status = None
+    filename = Path(file_path).name if file_path else file_uid[:8]
+
+    global current_op
+    if file_path:
+        current_op['file_path'] = file_path
+        current_op['file_uid'] = file_uid
+
+    normalized_path = normalize_xml_path(file_path) if file_path else None
+
+    while True:
+        elapsed = int(time.monotonic() - started_at)
+        remaining = max_wait - elapsed
+        elapsed_str = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
+        max_wait_str = f"{max_wait // 60:02d}:{max_wait % 60:02d}"
+
+        if elapsed >= max_wait:
+            print(
+                f"TIMEOUT: waited {elapsed}s for {filename} | file_uid={file_uid[:16]}..."
+            )
+            print(f"Check later: python3 src/metafora_client.py status {file_uid}")
+            print(f"Sign later:  python3 src/metafora_client.py sign {file_uid}")
+            current_op['file_uid'] = None
+            return None
+
+        resp = requests.get(
+            f"{API_BASE}/files/status/",
+            params={'file_uid': file_uid},
             headers=HEADERS,
             timeout=30
         )
-    if getattr(args, 'verbose', False):
-        print(f"<- {resp.status_code} {resp.reason}")
+
+        if verbose:
+            print(f"-> GET {API_BASE}/files/status/?file_uid={file_uid}")
+            print(f"<- {resp.status_code} {resp.reason}")
+
         if resp.status_code != 200:
-            print(f"  ERROR: HTTP {resp.status_code} {resp.reason}")
-            print(f"  {resp.text}")
-            return []
+            print(f"ERROR: status request failed for {filename}")
+            print(f"  HTTP {resp.status_code} {resp.reason}")
+            print(f"  Check later: python3 src/metafora_client.py status {file_uid}")
+            current_op['file_uid'] = None
+            return None
+
         data = resp.json().get('data', {})
-        status_code = data.get('xml', {}).get('status', {}).get('code')
-        status_text = data.get('xml', {}).get('status', {}).get('status_text', 'Unknown')
-        print(f"  status: {status_text} ({elapsed}s elapsed)")
+        xml_status = data.get('xml', {}).get('status', {})
+        status_code = xml_status.get('code')
+        status_text = xml_status.get('status_text', 'Unknown')
+
+        if last_status is None or last_status != status_text:
+            print(f"[{elapsed_str} / {max_wait_str}] {filename} | {status_text}")
+            last_status = status_text
+
         if status_code == 3:
             article_uids = [str(a) for a in (data.get('articles') or [])]
-            if log_path is not None and log_data is not None and file_path is not None:
-                entry = log_data.get(file_path, {})
+            if log_path is not None and log_data is not None and normalized_path is not None:
+                entry = log_data.get(normalized_path, {})
                 entry['file_uid'] = file_uid
                 entry['status_code'] = status_code
                 entry['status_text'] = status_text
                 entry['article_uids'] = article_uids
-                log_data[file_path] = entry
+                log_data[normalized_path] = entry
                 save_log(log_path, log_data)
-            print(f"  Processed OK: {len(article_uids)} articles found")
-            for uid in article_uids:
-                print(f"    {uid}")
+            print(f"Processed: {filename} | {len(article_uids)} articles found")
+            current_op['file_uid'] = None
             return article_uids
+
         if status_code == 4:
-            print("  ERROR: processing failed")
-            if log_path is not None and log_data is not None and file_path is not None:
-                entry = log_data.get(file_path, {})
+            print(f"ERROR: processing failed for {filename} | file_uid={file_uid[:16]}...")
+            print(f"  status_text: {status_text}")
+            print(f"Check later: python3 src/metafora_client.py status {file_uid}")
+            if log_path is not None and log_data is not None and normalized_path is not None:
+                entry = log_data.get(normalized_path, {})
                 entry['file_uid'] = file_uid
                 entry['status_code'] = status_code
                 entry['status_text'] = status_text
-                log_data[file_path] = entry
+                log_data[normalized_path] = entry
                 save_log(log_path, log_data)
+            current_op['file_uid'] = None
             return []
+
         time.sleep(interval)
-        elapsed = int(time.time() - t0) + elapsed
-    print(f"  TIMEOUT after {max_wait}s — check later with: status {file_uid}")
-    return []
+
+
+def handle_upload_409(response, file_path, log_data, args, verbose=False):
+    try:
+        body = response.json()
+    except Exception:
+        print(f"ERROR: HTTP 409 {response.reason}")
+        print(response.text)
+        return None
+
+    if body.get('error') == 'XML_ALREADY_EXISTS':
+        data = body.get('data', {})
+        exists_file_uid = data.get('exists_file_uid')
+        if exists_file_uid:
+            filename = Path(file_path).name
+            print(f"XML already exists on Metafora; using existing file_uid={exists_file_uid[:16]}...")
+            normalized_path = normalize_xml_path(file_path)
+            log_data[normalized_path] = {
+                'file_uid': exists_file_uid,
+                'uploaded_at': datetime.now().isoformat(),
+                'status_code': 2,
+                'status_text': 'Existing upload'
+            }
+            save_log(LOG_PATH, log_data)
+            if getattr(args, 'no_wait', False):
+                print(f"Check later: python3 src/metafora_client.py status {exists_file_uid}")
+                return {'file_uid': exists_file_uid, 'skip_polling': True}
+            else:
+                article_uids = poll_status(
+                    exists_file_uid, max_wait=args.max_wait, interval=args.poll_interval, verbose=verbose,
+                    log_path=LOG_PATH, log_data=log_data, file_path=file_path
+                )
+                if getattr(args, 'sign', False) and article_uids:
+                    signed_count = sign_all(exists_file_uid, article_uids, verbose=verbose)
+                else:
+                    signed_count = 0
+                return {'file_uid': exists_file_uid, 'article_uids': article_uids, 'recovered': True, 'signed_count': signed_count}
+        else:
+            print(f"ERROR: HTTP 409 XML_ALREADY_EXISTS but no exists_file_uid in response")
+            return None
+    else:
+        print(f"ERROR: HTTP 409 {response.reason}")
+        print(body)
+        return None
 
 
 def cmd_upload(args):
@@ -109,14 +201,18 @@ def cmd_upload(args):
         sys.exit(1)
 
     log_data = load_log(LOG_PATH)
+    normalized_path = normalize_xml_path(file_path)
 
-    entry = log_data.get(file_path)
+    entry = log_data.get(normalized_path)
     if entry and entry.get('status_code') == 3:
         print(f"WARNING: {file_path} is already uploaded and processed (status=3).")
         resp = input("Re-upload? [y/N]: ")
         if resp.lower() != 'y':
             print("Skipped.")
             return
+
+    print(f"Preparing upload: {file_path}")
+    print(f"Uploading: {Path(file_path).name}")
 
     if getattr(args, 'verbose', False):
         print(f"-> POST {API_BASE}/files/journal/")
@@ -133,6 +229,13 @@ def cmd_upload(args):
     if resp.status_code == 403:
         print("Access denied — check METAFORA_API_KEY in .venv")
         sys.exit(1)
+    if resp.status_code == 409:
+        result = handle_upload_409(resp, file_path, log_data, args, verbose=getattr(args, 'verbose', False))
+        if result is None:
+            sys.exit(1)
+        if result.get('skip_polling'):
+            return
+        return
     if resp.status_code == 422:
         body = resp.json()
         message = body.get('message', '')
@@ -161,24 +264,24 @@ def cmd_upload(args):
         print(resp.text)
         sys.exit(1)
 
-    result = resp.json()
-    file_uid = result.get('data', {}).get('file_uid')
+    result_data = resp.json()
+    file_uid = result_data.get('data', {}).get('file_uid')
     if not file_uid:
-        print(f"ERROR: No file_uid in response: {result}")
+        print(f"ERROR: No file_uid in response: {result_data}")
         sys.exit(1)
 
-    log_data[file_path] = {
+    log_data[normalized_path] = {
         'file_uid': file_uid,
         'uploaded_at': datetime.now().isoformat(),
         'status_code': 1,
         'status_text': 'Uploaded'
     }
     save_log(LOG_PATH, log_data)
-    print(f"Uploaded: {file_path} -> file_uid={file_uid}")
+    print(f"Uploaded: {Path(file_path).name} -> file_uid={file_uid[:16]}...")
 
     if not args.no_wait:
         article_uids = poll_status(
-            file_uid, verbose=args.verbose,
+            file_uid, max_wait=args.max_wait, interval=args.poll_interval, verbose=args.verbose,
             log_path=LOG_PATH, log_data=log_data, file_path=file_path
         )
         if args.sign and article_uids:
@@ -221,9 +324,13 @@ def cmd_status(args):
         print(f"  {uid}")
 
     if file_path and file_path in log_data:
-        log_data[file_path]['status_code'] = xml_status.get('code')
-        log_data[file_path]['status_text'] = xml_status.get('status_text')
-        log_data[file_path]['article_uids'] = articles
+        normalized_path = normalize_xml_path(file_path)
+        if normalized_path != file_path:
+            log_data[normalized_path] = log_data[file_path]
+            del log_data[file_path]
+        log_data[normalized_path]['status_code'] = xml_status.get('code')
+        log_data[normalized_path]['status_text'] = xml_status.get('status_text')
+        log_data[normalized_path]['article_uids'] = articles
         save_log(LOG_PATH, log_data)
 
 
@@ -262,8 +369,10 @@ def cmd_sign(args):
     file_uid, file_path = resolve_file_uid(args.FILE_OR_UID, log_data, verbose=args.verbose)
 
     article_uids = []
-    if file_path and file_path in log_data:
-        article_uids = log_data[file_path].get('article_uids', [])
+    if file_path:
+        normalized_path = normalize_xml_path(file_path)
+        if normalized_path in log_data:
+            article_uids = log_data[normalized_path].get('article_uids', [])
     if not article_uids:
         if args.verbose:
             print(f"-> GET {API_BASE}/files/status/?file_uid={file_uid}")
@@ -279,7 +388,8 @@ def cmd_sign(args):
             data = resp.json().get('data', {})
             article_uids = [str(a) for a in (data.get('articles') or [])]
             if file_path:
-                log_data[file_path]['article_uids'] = article_uids
+                normalized_path = normalize_xml_path(file_path)
+                log_data[normalized_path]['article_uids'] = article_uids
                 save_log(LOG_PATH, log_data)
     if not article_uids:
         print("ERROR: No article UIDs found. Ensure the file is processed first.")
@@ -316,21 +426,27 @@ def cmd_sign_all(args):
 
     for fpath in files:
         fpath_str = str(fpath)
-        entry = log_data.get(fpath_str)
+        normalized_path = normalize_xml_path(fpath_str)
+        entry = log_data.get(normalized_path)
         if not entry:
-            print(f"SKIP (not in upload log): {fpath_str}")
+            entry = log_data.get(fpath_str)
+            if entry:
+                log_data[normalized_path] = entry
+                del log_data[fpath_str]
+        if not entry:
+            print(f"SKIP (not in upload log): {Path(fpath_str).name}")
             skipped += 1
             continue
         if entry.get('status_code') != 3:
-            print(f"SKIP (not processed, status={entry.get('status_code')}): {fpath_str}")
+            print(f"SKIP (not processed, status={entry.get('status_code')}): {Path(fpath_str).name}")
             skipped += 1
             continue
         article_uids = entry.get('article_uids', [])
         if not article_uids:
-            print(f"SKIP (no article_uids in log): {fpath_str}")
+            print(f"SKIP (no article_uids in log): {Path(fpath_str).name}")
             skipped += 1
             continue
-        print(f"\n--- Signing: {fpath_str} ({len(article_uids)} articles) ---")
+        print(f"\n--- Signing: {Path(fpath_str).name} ({len(article_uids)} articles) ---")
         count = sign_all(entry['file_uid'], article_uids, verbose=args.verbose)
         total_articles += count
         signed_files += 1
@@ -355,9 +471,14 @@ def cmd_delete(args):
 
     if resp.status_code == 204:
         print(f"Deleted: {file_uid}")
-        if file_path and file_path in log_data:
-            del log_data[file_path]
-            save_log(LOG_PATH, log_data)
+        if file_path:
+            normalized_path = normalize_xml_path(file_path)
+            if normalized_path in log_data:
+                del log_data[normalized_path]
+                save_log(LOG_PATH, log_data)
+            elif file_path in log_data:
+                del log_data[file_path]
+                save_log(LOG_PATH, log_data)
     elif resp.status_code == 409:
         print("Cannot delete: file has signed publications")
         print(resp.text)
@@ -409,7 +530,6 @@ def cmd_upload_all(args):
     if os.path.isdir(year_or_dir):
         base_dir = Path(year_or_dir)
     else:
-        # year_or_dir is a year string like "2025"
         base_dir = Path(__file__).parent.parent / 'output' / year_or_dir
 
     if not base_dir.is_dir():
@@ -435,23 +555,39 @@ def cmd_upload_all(args):
     log_data = load_log(LOG_PATH)
     total = len(files)
     success = 0
-    total_articles = 0
+    already_processed = 0
+    recovered_409 = 0
+    failed = 0
+    processed_articles = 0
+    signed_articles = 0
+    base_dir_str = str(base_dir)
+
+    print(f"\n================================================")
+    print(f"Upload-all: {base_dir_str}")
+    print(f"================================================")
 
     for fpath in files:
         fpath_str = str(fpath)
-        entry = log_data.get(fpath_str)
+        normalized_path = normalize_xml_path(fpath_str)
+        entry = log_data.get(normalized_path)
+        if not entry:
+            entry = log_data.get(fpath_str)
+            if entry:
+                log_data[normalized_path] = entry
+                del log_data[fpath_str]
         if entry and entry.get('status_code') == 3:
             article_uids = entry.get('article_uids', [])
-            total_articles += len(article_uids)
-            success += 1
+            processed_articles += len(article_uids)
+            already_processed += 1
             if sign and article_uids:
-                print(f"\n--- Signing (already processed): {fpath_str} ---")
-                sign_all(entry['file_uid'], article_uids, verbose=args.verbose)
+                print(f"\n--- Signing (already processed): {Path(fpath_str).name} ---")
+                signed_count = sign_all(entry['file_uid'], article_uids, verbose=args.verbose)
+                signed_articles += signed_count
             else:
-                print(f"SKIP (already processed): {fpath_str}")
+                print(f"SKIP (already processed): {Path(fpath_str).name}")
             continue
 
-        print(f"\n--- Uploading: {fpath_str} ---")
+        print(f"\n--- Uploading: {Path(fpath_str).name} ---")
         if args.verbose:
             print(f"-> POST {API_BASE}/files/journal/")
         with open(fpath_str, 'rb') as f:
@@ -466,6 +602,24 @@ def cmd_upload_all(args):
 
         if resp.status_code == 403:
             print("Access denied — check METAFORA_API_KEY in .venv")
+            failed += 1
+            continue
+        if resp.status_code == 409:
+            result = handle_upload_409(resp, fpath_str, log_data, args, verbose=args.verbose)
+            if result is None:
+                print(f"  FAILED: {Path(fpath_str).name}")
+                failed += 1
+                continue
+            if result.get('skip_polling'):
+                recovered_409 += 1
+                continue
+            recovered_409 += 1
+            if result.get('article_uids'):
+                article_uids = result['article_uids']
+                success += 1
+                processed_articles += len(article_uids)
+                signed_count = result.get('signed_count', 0)
+                signed_articles += signed_count
             continue
         if resp.status_code == 422:
             body = resp.json()
@@ -489,41 +643,56 @@ def cmd_upload_all(args):
                     print(f"  errors: {errors}")
             if getattr(args, 'verbose', False):
                 print(f"  raw: {body}")
+            failed += 1
             continue
         if resp.status_code not in (200, 201):
             print(f"ERROR: HTTP {resp.status_code} {resp.reason}")
             print(resp.text)
+            failed += 1
             continue
 
-        result = resp.json()
-        file_uid = result.get('data', {}).get('file_uid')
+        result_data = resp.json()
+        file_uid = result_data.get('data', {}).get('file_uid')
         if not file_uid:
             print(f"ERROR: No file_uid in response")
+            failed += 1
             continue
 
-        log_data[fpath_str] = {
+        log_data[normalized_path] = {
             'file_uid': file_uid,
             'uploaded_at': datetime.now().isoformat(),
             'status_code': 1,
             'status_text': 'Uploaded'
         }
         save_log(LOG_PATH, log_data)
-        print(f"Uploaded: {fpath_str} -> file_uid={file_uid}")
+        print(f"Uploaded: {Path(fpath_str).name} -> file_uid={file_uid[:16]}...")
 
         article_uids = poll_status(
-            file_uid, verbose=args.verbose,
+            file_uid, max_wait=args.max_wait, interval=args.poll_interval, verbose=args.verbose,
             log_path=LOG_PATH, log_data=log_data, file_path=fpath_str
         )
 
         if article_uids:
             success += 1
-            total_articles += len(article_uids)
+            processed_articles += len(article_uids)
             if sign:
-                sign_all(file_uid, article_uids, verbose=args.verbose)
+                signed_count = sign_all(file_uid, article_uids, verbose=args.verbose)
+                signed_articles += signed_count
         else:
-            print(f"  FAILED: {fpath_str}")
+            print(f"  FAILED: {Path(fpath_str).name}")
+            failed += 1
 
-    print(f"\nUpload-all complete: {success}/{total} files, {total_articles} articles")
+    print(f"\n================================================")
+    print(f"Upload-all summary: {base_dir_str}")
+    print(f"Uploaded/processed : {success} files")
+    if processed_articles > 0:
+        print(f"Processed articles : {processed_articles}")
+    if sign:
+        print(f"Signed             : {signed_articles} articles")
+    print(f"Already processed  : {already_processed} files")
+    print(f"Recovered (409)    : {recovered_409} files")
+    print(f"Failed             : {failed} files")
+    print(f"================================================")
 
 
 def main():
@@ -534,6 +703,8 @@ def main():
     p_upload.add_argument('FILE', help='Path to XML file')
     p_upload.add_argument('--sign', action='store_true', help='Sign all articles after processing')
     p_upload.add_argument('--no-wait', action='store_true', help='Do not poll for processing status')
+    p_upload.add_argument('--max-wait', type=int, default=300, help='Maximum seconds to wait for processing (default: 300)')
+    p_upload.add_argument('--poll-interval', type=int, default=5, help='Seconds between status checks (default: 5)')
     p_upload.add_argument('--verbose', action='store_true', help='Print raw HTTP requests/responses')
 
     p_status = subparsers.add_parser('status', help='Check status of an uploaded file')
@@ -557,6 +728,8 @@ def main():
     p_upload_all.add_argument('--journal', help='Journal series name prefix (e.g. mathem)')
     p_upload_all.add_argument('--sign', action='store_true', help='Sign all articles after processing')
     p_upload_all.add_argument('--dry-run', action='store_true', help='List files without uploading')
+    p_upload_all.add_argument('--max-wait', type=int, default=300, help='Maximum seconds to wait for processing (default: 300)')
+    p_upload_all.add_argument('--poll-interval', type=int, default=5, help='Seconds between status checks (default: 5)')
     p_upload_all.add_argument('--verbose', action='store_true', help='Print raw HTTP requests/responses')
 
     p_sign_all = subparsers.add_parser(
@@ -578,11 +751,25 @@ def main():
     )
 
     args = parser.parse_args()
-    global verbose
-    verbose = getattr(args, 'verbose', False)
+
+    if args.command == 'upload':
+        if args.max_wait <= 0:
+            print("ERROR: --max-wait must be a positive integer")
+            sys.exit(1)
+        if args.poll_interval <= 0:
+            print("ERROR: --poll-interval must be a positive integer")
+            sys.exit(1)
+
+    if args.command == 'upload-all':
+        if args.max_wait <= 0:
+            print("ERROR: --max-wait must be a positive integer")
+            sys.exit(1)
+        if args.poll_interval <= 0:
+            print("ERROR: --poll-interval must be a positive integer")
+            sys.exit(1)
 
     if not API_KEY:
-        print("ERROR: METAFORA_API_KEY not set. Check your .venv file.")
+        print("ERROR: METAFORA_API_KEY not set. Check your .env file.")
         sys.exit(1)
 
     commands = {
@@ -594,7 +781,20 @@ def main():
         'upload-all': cmd_upload_all,
         'sign-all': cmd_sign_all,
     }
-    commands[args.command](args)
+
+    current_op = {'file_path': None, 'file_uid': None}
+
+    try:
+        commands[args.command](args)
+    except KeyboardInterrupt:
+        print("\nInterrupted by user.")
+        if current_op.get('file_path'):
+            print(f"File: {current_op['file_path']}")
+        if current_op.get('file_uid'):
+            print(f"file_uid: {current_op['file_uid']}")
+            print(f"Check later: python3 src/metafora_client.py status {current_op['file_uid']}")
+            print(f"Sign later:  python3 src/metafora_client.py sign {current_op['file_uid']}")
+        sys.exit(130)
 
 
 if __name__ == '__main__':

@@ -120,6 +120,24 @@ Output: `output/<year>/<series>_n<number>.xml`
 
 **Step A2 — Upload all generated XML files**
 
+### Example: upload new 2026 Biogeography issues
+
+From the project root:
+
+```bash
+# Generate or refresh XML files for all 2026 Biogeography issues.
+python3 src/generate_all.py --journal-path biogeo --year-from 2026 --year-to 2026 --validate
+
+# Upload all 2026 XML files and sign their publications.
+python3 src/metafora_client.py upload-all 2026 --sign
+```
+
+The upload command processes every XML file in `output/2026`. Files already processed by Metafora are skipped, so it is safe to run the command again.
+
+---
+
+**Step A2 — Upload all generated XML files**
+
 ```bash
 # Upload all files for a year and sign automatically (recommended)
 python3 src/metafora_client.py upload-all 2015 --sign
@@ -129,7 +147,21 @@ python3 src/metafora_client.py upload-all 2015 --journal mathem --sign
 
 # Preview which files would be uploaded (no actual upload)
 python3 src/metafora_client.py upload-all 2015 --dry-run
+
+# Optional: allow more time for a large batch if Metafora is slow
+python3 src/metafora_client.py upload-all 2015 --sign --max-wait 600 --poll-interval 10
 ```
+
+The default waiting settings are suitable for normal use; this optional form is only for unusually slow processing.
+
+If processing is interrupted or Metafora needs longer than expected, use the file UID printed by the program:
+
+```bash
+python3 src/metafora_client.py status FILE_UID
+python3 src/metafora_client.py sign FILE_UID
+```
+
+When Metafora returns `XML_ALREADY_EXISTS`, the client uses the server-provided file UID and continues safely.
 
 **Step A3 — Sign uploaded articles (if `--sign` was omitted in Step A2)**
 
@@ -184,6 +216,20 @@ python3 src/metafora_client.py upload output/2025/mathem_n4.xml --verbose
 ```bash
 python3 src/metafora_client.py sign output/2025/mathem_n4.xml
 ```
+
+---
+
+### Notes for `upload` and `upload-all`
+
+- `upload-all YEAR --sign` uploads each XML file, waits for Metafora processing, and signs the resulting publications.
+- Files already processed by Metafora are skipped, so rerunning the command is safe.
+- If Metafora reports `XML_ALREADY_EXISTS`, the client uses the existing server file UID and continues.
+- If processing is interrupted or takes too long, use the file UID printed by the program:
+
+  ```bash
+  python3 src/metafora_client.py status FILE_UID
+  python3 src/metafora_client.py sign FILE_UID
+  ```
 
 ---
 
@@ -245,6 +291,11 @@ python3 src/metafora_client.py delete output/2025/mathem_n4.xml
 
 # Check whether a DOI is already registered in Metafora
 python3 src/metafora_client.py check-doi 10.14529/mmph250101
+
+# Continue after an interruption or a processing timeout.
+# Use the file UID printed by the program.
+python3 src/metafora_client.py status FILE_UID
+python3 src/metafora_client.py sign FILE_UID
 ```
 
 ---
@@ -286,10 +337,14 @@ regenerate the XML.
 
 ## Upload log
 
-Every successful upload is recorded in `output/upload_log.json` with the `file_uid`,
-upload timestamp, processing status, and the list of `article_uid` values returned by
-Metafora. The log is read automatically by `status`, `sign`, and `delete` commands so
-you don't have to track UUIDs by hand.
+Successful uploads are recorded in `output/upload_log.json` with the Metafora file UID, processing status, and article UIDs. The `status`, `sign`, and `delete` commands use this information automatically when an XML file path is supplied.
+
+If Metafora reports `XML_ALREADY_EXISTS`, the client uses the existing server file UID and continues safely. If processing is interrupted or takes too long, use the file UID printed by the program:
+
+```bash
+python3 src/metafora_client.py status FILE_UID
+python3 src/metafora_client.py sign FILE_UID
+```
 
 ---
 
