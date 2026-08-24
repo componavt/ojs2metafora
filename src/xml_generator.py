@@ -3,7 +3,7 @@ import logging
 from lxml import etree
 from itertools import zip_longest
 from typing import Optional
-from fetch_article import get_setting, get_settings_by_name
+from src.fetch_article import get_setting, get_settings_by_name
 
 
 logger = logging.getLogger(__name__)

@@ -7,10 +7,11 @@ import logging
 import sys
 from pathlib import Path
 
-# Add the src directory to the path to allow imports
-sys.path.append(str(Path(__file__).parent))
+# Add the repository root to the path to allow importing from src
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from issue_builder import build_journal_xml, SERIES_MAP
+from src.issue_builder import build_journal_xml, SERIES_MAP
+from src.validator import validate_xml
 
 
 def main():
@@ -68,7 +69,6 @@ def main():
         
         # Validate if requested
         if args.validate:
-            from validator import validate_xml
             is_valid = validate_xml(str(output_path), xsd_path)
             
             if is_valid:

@@ -9,10 +9,11 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from db_connector import get_connection
-from issue_builder import build_journal_xml, SERIES_MAP
+from src.db_connector import get_connection
+from src.issue_builder import build_journal_xml, SERIES_MAP
+from src.validator import validate_xml
 
 
 logger = logging.getLogger(__name__)
@@ -178,7 +179,6 @@ def main():
                     logger.info(f"Saved: {output_path}")
 
                     if args.validate:
-                        from validator import validate_xml
                         is_valid = validate_xml(str(output_path), xsd_path)
                         if is_valid:
                             logger.info(f"Validation PASS: {output_path}")
@@ -292,7 +292,6 @@ def main():
                 logger.info(f"Saved: {output_path}")
 
                 if args.validate:
-                    from validator import validate_xml
                     is_valid = validate_xml(str(output_path), xsd_path)
                     if is_valid:
                         logger.info(f"Validation PASS: {output_path}")

@@ -1,4 +1,4 @@
-**Актуальный repository snapshot (приложен ранее файл):**
+**Актуальный repository snapshot (прилагаю файл):**
 `concat_NN.md` 
 
 **Что я лично проверил в приложении после предыдущей итерации:**
@@ -52,7 +52,7 @@ CLI prompt для Qwen3-Coder-Next должен:
    - не менять несвязанные файлы, зависимости, конфигурацию чего-либо без явного объяснения необходимости;
    - требовать в финальном отчёте: изменённые файлы, реализованные требования, выполненные тесты, известные ограничения.
 
-Включи следующий блок в итоговый промпт:
+Включи следующие два блока в итоговый промпт:
 ```
 ============================================================
 TOOL-CALL DISCIPLINE
@@ -68,4 +68,21 @@ TOOL-CALL DISCIPLINE
 - If a tool validation error occurs, retry once with the exact required schema.
   Do not repeat narration or issue another empty tool call.
 - Prefer several small edits over one large write containing a whole long source file.
+
+============================================================
+RECOVERY FROM INVALID-TOOL ERRORS
+============================================================
+
+- If the system returns an error such as
+  `Model tried to call unavailable tool 'invalid'`,
+  treat it as a temporary internal Kilo Code client error.
+- Do not conclude that the intended tool is unavailable.
+- Do not change the planned workflow solely because of this error.
+- Never attempt to invoke a tool named `invalid`.
+- Immediately retry the same intended native structured tool call with the same valid
+  tool name and the same arguments.
+- Do not replace the retry with pseudo-tool calls, XML, Markdown JSON blocks,
+  narration, or an explanation of the failed call.
+- If the same call fails again, inspect the tool schema and retry once only with
+  corrected valid arguments; then report the unresolved error clearly.
 ```

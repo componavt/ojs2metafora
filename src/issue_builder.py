@@ -1,9 +1,9 @@
 import logging
 import re
 from lxml import etree
-from db_connector import get_connection
-from fetch_article import fetch_article_metadata, get_setting
-from xml_generator import build_article_element
+from src.db_connector import get_connection
+from src.fetch_article import fetch_article_metadata, get_setting
+from src.xml_generator import build_article_element
 
 
 logger = logging.getLogger(__name__)
