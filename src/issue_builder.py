@@ -21,11 +21,11 @@ SERIES_MAP = {
 }
 
 
-def fetch_issue_article_ids(issue_id: int) -> list[dict]:
+def fetch_issue_article_ids(issue_id: int, source_key: str = "karrc") -> list[dict]:
     """
     Fetch the list of all published article IDs for a given issue_id from the DB.
     """
-    conn = get_connection()
+    conn = get_connection(source_key)
     cursor = conn.cursor()
     
     try:
@@ -57,11 +57,11 @@ def fetch_issue_article_ids(issue_id: int) -> list[dict]:
         conn.close()
 
 
-def fetch_issue_metadata(issue_id: int) -> dict:
+def fetch_issue_metadata(issue_id: int, source_key: str = "karrc") -> dict:
     """
     Fetch the issue row and its associated journal info.
     """
-    conn = get_connection()
+    conn = get_connection(source_key)
     cursor = conn.cursor()
     
     try:
@@ -171,11 +171,11 @@ def compute_issue_pages(articles_data):
     return f"{min(fpages)}-{max(lpages)}"
 
 
-def get_section_titles(section_id: int):
+def get_section_titles(section_id: int, source_key: str = "karrc"):
     """
     Fetch section titles for a given section_id.
     """
-    conn = get_connection()
+    conn = get_connection(source_key)
     cursor = conn.cursor()
     
     try:
@@ -207,15 +207,15 @@ def get_section_titles(section_id: int):
         conn.close()
 
 
-def build_journal_xml(issue_id: int, titleid: str = ''):
+def build_journal_xml(issue_id: int, titleid: str = '', source_key: str = "karrc"):
     """
     Main function to build the complete journal XML tree.
     """
     # Fetch issue metadata
-    issue_metadata = fetch_issue_metadata(issue_id)
+    issue_metadata = fetch_issue_metadata(issue_id, source_key=source_key)
     
     # Fetch article IDs for the issue
-    article_ids = fetch_issue_article_ids(issue_id)
+    article_ids = fetch_issue_article_ids(issue_id, source_key=source_key)
     
     # Fetch metadata for each article
     articles_data = []
@@ -224,7 +224,7 @@ def build_journal_xml(issue_id: int, titleid: str = ''):
         logger.info(f"Processing article {article_id} ({i}/{len(article_ids)})...")
         
         try:
-            article_data = fetch_article_metadata(article_id)
+            article_data = fetch_article_metadata(article_id, source_key=source_key)
             if article_data is not None:
                 articles_data.append(article_data)
             else:
@@ -306,7 +306,7 @@ def build_journal_xml(issue_id: int, titleid: str = ''):
         if section_id != current_section_id:
             if section_id not in processed_sections:
                 # Get section titles
-                section_titles = get_section_titles(section_id)
+                section_titles = get_section_titles(section_id, source_key=source_key)
                 title_ru = section_titles.get('title_ru', '')
                 title_en = section_titles.get('title_en', '')
                 

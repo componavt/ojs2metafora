@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.issue_builder import build_journal_xml, SERIES_MAP
+from src.sources import SOURCES
 from src.validator import validate_xml
 
 
@@ -23,6 +24,7 @@ def main():
         help='Directory for output files (default: <project_root>/output)'
     )
     parser.add_argument('--titleid', default='', help='Metaphora titleid value for <titleid> element')
+    parser.add_argument('--source', choices=sorted(SOURCES.keys()), default="karrc", help="Source profile to use (default: karrc)")
     parser.add_argument('--validate', action='store_true', help='Validate the output XML against journal3.xsd')
     parser.add_argument('--verbose', action='store_true', help='Enable DEBUG-level logging')
     
@@ -44,7 +46,7 @@ def main():
             xsd_path = 'schemas/journal3.xsd'
         
         # Build the journal XML
-        tree, meta = build_journal_xml(args.issue_id, titleid=args.titleid)
+        tree, meta = build_journal_xml(args.issue_id, titleid=args.titleid, source_key=args.source)
         
         series_name = SERIES_MAP.get(meta.get('journal_path', ''), meta.get('journal_path', 'unknown'))
         year = meta.get('year', 'unknown')

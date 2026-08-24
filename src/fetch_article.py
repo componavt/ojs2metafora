@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.db_connector import get_connection
+from src.sources import SOURCES
 from tabulate import tabulate
 
 
@@ -52,7 +53,7 @@ def convert_datetime(obj):
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 
-def fetch_article_metadata(article_id):
+def fetch_article_metadata(article_id, source_key: str = "karrc"):
     """
     Fetch complete metadata for a single article from the database.
     
@@ -64,7 +65,7 @@ def fetch_article_metadata(article_id):
     """
     connection = None
     try:
-        connection = get_connection()
+        connection = get_connection(source_key)
         
         # Query 1 — Article core data
         with connection.cursor() as cursor:
@@ -386,13 +387,14 @@ primary_contact: {author.get('primary_contact', 'N/A')}
 def main():
     parser = argparse.ArgumentParser(description="Fetch complete metadata for a single OJS 2.4.5 article")
     parser.add_argument('article_id', type=int, help='ID of the article to fetch')
+    parser.add_argument('--source', choices=sorted(SOURCES.keys()), default="karrc", help="Source profile to use (default: karrc)")
     parser.add_argument('--output-dir', default='output', help='Output directory (default: output)')
     parser.add_argument('--format', choices=['txt', 'json'], default='txt', help='Output format (default: txt)')
     
     args = parser.parse_args()
     
     # Fetch the article metadata
-    article_data = fetch_article_metadata(args.article_id)
+    article_data = fetch_article_metadata(args.article_id, source_key=args.source)
     
     if not article_data:
         print(f"Error: Article with ID {args.article_id} not found in the database.")

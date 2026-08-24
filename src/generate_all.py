@@ -13,19 +13,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db_connector import get_connection
 from src.issue_builder import build_journal_xml, SERIES_MAP
+from src.sources import SOURCES
 from src.validator import validate_xml
 
 
 logger = logging.getLogger(__name__)
 
 
-def fetch_all_issues(journal_id=None, journal_path=None, year_from=None, year_to=None) -> list:
+def fetch_all_issues(journal_id=None, journal_path=None, year_from=None, year_to=None, source_key: str = "karrc") -> list:
     """
     Fetch all published issues for a given journal.
     Either journal_id or journal_path must be provided.
     Returns a list of dicts with issue_id, number, year, date_published.
     """
-    conn = get_connection()
+    conn = get_connection(source_key)
     cursor = conn.cursor()
 
     try:
@@ -85,6 +86,7 @@ def main():
     parser.add_argument('--year-to', type=int, help='Only process issues up to this year inclusive')
     parser.add_argument('--verbose', action='store_true', help='Enable DEBUG logging')
     parser.add_argument('--dry-run', action='store_true', help='Print issue list without generating files')
+    parser.add_argument('--source', choices=sorted(SOURCES.keys()), default="karrc", help="Source profile to use (default: karrc)")
     parser.add_argument(
         '--all-journals',
         action='store_true',
@@ -107,7 +109,7 @@ def main():
     )
 
     if args.all_journals:
-        conn = get_connection()
+        conn = get_connection(args.source)
         cursor = conn.cursor()
         try:
             cursor.execute(
@@ -127,7 +129,7 @@ def main():
             for row in journals:
                 j_id = row['journal_id']
                 j_path = row['path']
-                issues = fetch_all_issues(journal_id=j_id, year_from=args.year_from, year_to=args.year_to)
+                issues = fetch_all_issues(journal_id=j_id, year_from=args.year_from, year_to=args.year_to, source_key=args.source)
                 for issue in issues:
                     print(f"  {j_path}: issue_id={issue['issue_id']}  year={issue['year']}  n={issue['number']}")
             sys.exit(0)
@@ -141,7 +143,7 @@ def main():
             journal_id = row['journal_id']
             journal_path = row['path']
             try:
-                issues = fetch_all_issues(journal_id=journal_id, year_from=args.year_from, year_to=args.year_to)
+                issues = fetch_all_issues(journal_id=journal_id, year_from=args.year_from, year_to=args.year_to, source_key=args.source)
             except Exception as e:
                 logging.error(f"Failed to fetch issues for {journal_path}: {e}", exc_info=True)
                 print(f"Processing journal: {journal_path} (id={journal_id}) — 0 issues (error)")
@@ -159,7 +161,7 @@ def main():
                 try:
                     logger.info(f"Processing issue_id={issue_id} year={issue_info['year']} n={issue_info['number']}...")
 
-                    tree, meta = build_journal_xml(issue_id, titleid=args.titleid)
+                    tree, meta = build_journal_xml(issue_id, titleid=args.titleid, source_key=args.source)
 
                     series_name = SERIES_MAP.get(meta.get('journal_path', ''), meta.get('journal_path', 'unknown'))
                     year = meta.get('year', 'unknown')
@@ -208,7 +210,7 @@ def main():
         journal_path = args.journal_path
 
         if journal_id is None:
-            conn = get_connection()
+            conn = get_connection(args.source)
             cursor = conn.cursor()
             try:
                 cursor.execute(
@@ -224,7 +226,7 @@ def main():
                 cursor.close()
                 conn.close()
         elif journal_path is None:
-            conn = get_connection()
+            conn = get_connection(args.source)
             cursor = conn.cursor()
             try:
                 cursor.execute(
@@ -245,7 +247,8 @@ def main():
                 journal_id=journal_id,
                 journal_path=journal_path,
                 year_from=args.year_from,
-                year_to=args.year_to
+                year_to=args.year_to,
+                source_key=args.source
             )
         except Exception as e:
             logging.error(f"Failed to fetch issues: {e}", exc_info=True)
@@ -272,7 +275,7 @@ def main():
             try:
                 logger.info(f"Processing issue_id={issue_id} year={issue_info['year']} n={issue_info['number']}...")
 
-                tree, meta = build_journal_xml(issue_id, titleid=args.titleid)
+                tree, meta = build_journal_xml(issue_id, titleid=args.titleid, source_key=args.source)
 
                 series_name = SERIES_MAP.get(meta.get('journal_path', ''), meta.get('journal_path', 'unknown'))
                 year = meta.get('year', 'unknown')

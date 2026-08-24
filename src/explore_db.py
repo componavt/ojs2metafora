@@ -10,6 +10,7 @@ Usage:
     (run from the project root directory)
 """
 
+import argparse
 import os
 import sys
 import datetime
@@ -19,6 +20,7 @@ from tabulate import tabulate
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.db_connector import get_connection
+from src.sources import SOURCES
 
 
 def anonymize_authors_data(rows):
@@ -108,13 +110,18 @@ def main():
     """
     Main function to connect to the database, run queries, and generate the report.
     """
+    parser = argparse.ArgumentParser(description="Explore OJS database")
+    parser.add_argument('--source', choices=sorted(SOURCES.keys()), default="karrc", help="Source profile to use (default: karrc)")
+    
+    args = parser.parse_args()
+    
     # Create output directory if it doesn't exist
     os.makedirs("output", exist_ok=True)
     
     # Establish database connection
     connection = None
     try:
-        connection = get_connection()
+        connection = get_connection(args.source)
         
         # Define the queries to run
         queries = [
