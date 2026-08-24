@@ -1,32 +1,70 @@
 """
-Database connector module for OJS 2.4.5 database.
+Database connector module for OJS databases.
 
 This module provides a function to establish a connection to the MySQL database
-containing OJS 2.4.5 data using credentials from the .env file.
+containing OJS data using credentials from the .env file.
 """
 
 import os
 from dotenv import load_dotenv
 import pymysql
 
-# Load environment variables from .env file
+from .sources import SOURCES
+
 load_dotenv()
 
 
-def get_connection():
+def get_connection(source_key: str = "karrc"):
     """
-    Creates and returns a MySQL database connection using credentials from .env file.
+    Creates and returns a MySQL database connection for the specified source.
+    
+    Args:
+        source_key: The key identifying the source configuration (default: "karrc").
     
     Returns:
         pymysql.Connection: A connection object configured with DictCursor for 
         dictionary-style row access.
+    
+    Raises:
+        ValueError: If source_key is unknown or required configuration is missing.
     """
+    if source_key not in SOURCES:
+        available = ", ".join(sorted(SOURCES.keys()))
+        raise ValueError(
+            f"Unknown source key '{source_key}'. Available sources: {available}"
+        )
+    
+    profile = SOURCES[source_key]
+    env_prefix = profile["env_prefix"]
+    
+    dbhost = os.getenv(f"{env_prefix}_DBHOST", "").strip()
+    dbuser = os.getenv(f"{env_prefix}_DBUSER", "").strip()
+    dbpassword = os.getenv(f"{env_prefix}_DBPASSWORD", "")
+    dbname = os.getenv(f"{env_prefix}_DBNAME", "").strip()
+    dbcharset = os.getenv(f"{env_prefix}_DBCHARSET", "").strip()
+    
+    if not dbhost:
+        raise ValueError(
+            f"Missing required configuration: {env_prefix}_DBHOST is not set"
+        )
+    if not dbuser:
+        raise ValueError(
+            f"Missing required configuration: {env_prefix}_DBUSER is not set"
+        )
+    if not dbname:
+        raise ValueError(
+            f"Missing required configuration: {env_prefix}_DBNAME is not set"
+        )
+    
+    if not dbcharset:
+        dbcharset = "utf8mb4"
+    
     connection = pymysql.connect(
-        host=os.getenv('DB_HOST'),
-        user=os.getenv('DB_USER'),
-        password=os.getenv('DB_PASSWORD'),
-        database=os.getenv('DB_NAME'),
-        charset=os.getenv('DB_CHARSET', 'utf8mb4'),
+        host=dbhost,
+        user=dbuser,
+        password=dbpassword,
+        database=dbname,
+        charset=dbcharset,
         cursorclass=pymysql.cursors.DictCursor
     )
     return connection
