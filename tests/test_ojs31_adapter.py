@@ -186,5 +186,324 @@ class TestOjs31AdapterSectionTitles(unittest.TestCase):
         self.assertEqual(result['title_en'], 'Section En')
 
 
+class TestOjs31AdapterDoiNormalization(unittest.TestCase):
+
+    def setUp(self):
+        self.env_patcher = patch.dict(
+            os.environ,
+            {
+                "MGTA_DBHOST": "localhost",
+                "MGTA_DBUSER": "mgta_user",
+                "MGTA_DBPASSWORD": "mgta_pass",
+                "MGTA_DBNAME": "mgta_db",
+                "MGTA_DBCHARSET": "utf8mb4",
+            },
+            clear=True,
+        )
+        self.env_patcher.start()
+
+    def tearDown(self):
+        self.env_patcher.stop()
+
+    @patch('src.adapters.ojs31.get_connection')
+    def test_blank_native_doi_uses_crossref_fallback(self, mock_get_conn):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.__enter__ = lambda x: mock_cursor
+        mock_cursor.__exit__ = lambda x, y, z, w: None
+        mock_get_conn.return_value = mock_conn
+
+        mock_cursor.fetchone.side_effect = [
+            {
+                "article_id": 99,
+                "locale": "ru_RU",
+                "journal_id": 1,
+                "context_id": 1,
+                "section_id": 1,
+                "language": "ru",
+                "pages": "1-2",
+                "date_submitted": None,
+                "last_modified": None,
+                "status": 3,
+                "raw_citations_field": None,
+            },
+            None,
+            {
+                "journal_id": 1,
+                "path": "mgta",
+                "primary_locale": "en_US",
+                "enabled": 1,
+            },
+            None,
+        ]
+
+        mock_cursor.fetchall.side_effect = [
+            [],
+            [
+                {
+                    "locale": "",
+                    "setting_name": "pub-id::doi",
+                    "setting_value": "",
+                },
+                {
+                    "locale": "",
+                    "setting_name": "crossref::registeredDoi",
+                    "setting_value": "10.17076/test_doi",
+                },
+            ],
+            [],
+            [],
+            [],
+        ]
+
+        result = Ojs31Adapter("mgta").fetch_article_metadata(99)
+
+        doi_rows = [
+            row
+            for row in result["article_settings"]
+            if row["setting_name"] == "pub-id::doi"
+        ]
+
+        self.assertEqual(len(doi_rows), 1)
+        self.assertEqual(doi_rows[0]["setting_value"], "10.17076/test_doi")
+
+    @patch('src.adapters.ojs31.get_connection')
+    def test_missing_native_doi_uses_crossref_fallback(self, mock_get_conn):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.__enter__ = lambda x: mock_cursor
+        mock_cursor.__exit__ = lambda x, y, z, w: None
+        mock_get_conn.return_value = mock_conn
+
+        mock_cursor.fetchone.side_effect = [
+            {
+                "article_id": 99,
+                "locale": "ru_RU",
+                "journal_id": 1,
+                "context_id": 1,
+                "section_id": 1,
+                "language": "ru",
+                "pages": "1-2",
+                "date_submitted": None,
+                "last_modified": None,
+                "status": 3,
+                "raw_citations_field": None,
+            },
+            None,
+            {
+                "journal_id": 1,
+                "path": "mgta",
+                "primary_locale": "en_US",
+                "enabled": 1,
+            },
+            None,
+        ]
+
+        mock_cursor.fetchall.side_effect = [
+            [],
+            [
+                {
+                    "locale": "",
+                    "setting_name": "crossref::registeredDoi",
+                    "setting_value": "10.17076/test_doi",
+                },
+            ],
+            [],
+            [],
+            [],
+        ]
+
+        result = Ojs31Adapter("mgta").fetch_article_metadata(99)
+
+        doi_rows = [
+            row
+            for row in result["article_settings"]
+            if row["setting_name"] == "pub-id::doi"
+        ]
+
+        self.assertEqual(len(doi_rows), 1)
+        self.assertEqual(doi_rows[0]["locale"], "")
+        self.assertEqual(doi_rows[0]["setting_value"], "10.17076/test_doi")
+
+    @patch('src.adapters.ojs31.get_connection')
+    def test_non_blank_native_doi_wins(self, mock_get_conn):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.__enter__ = lambda x: mock_cursor
+        mock_cursor.__exit__ = lambda x, y, z, w: None
+        mock_get_conn.return_value = mock_conn
+
+        mock_cursor.fetchone.side_effect = [
+            {
+                "article_id": 99,
+                "locale": "ru_RU",
+                "journal_id": 1,
+                "context_id": 1,
+                "section_id": 1,
+                "language": "ru",
+                "pages": "1-2",
+                "date_submitted": None,
+                "last_modified": None,
+                "status": 3,
+                "raw_citations_field": None,
+            },
+            None,
+            {
+                "journal_id": 1,
+                "path": "mgta",
+                "primary_locale": "en_US",
+                "enabled": 1,
+            },
+            None,
+        ]
+
+        mock_cursor.fetchall.side_effect = [
+            [],
+            [
+                {
+                    "locale": "",
+                    "setting_name": "pub-id::doi",
+                    "setting_value": "10.17076/native_doi",
+                },
+                {
+                    "locale": "",
+                    "setting_name": "crossref::registeredDoi",
+                    "setting_value": "10.17076/crossref_doi",
+                },
+            ],
+            [],
+            [],
+            [],
+        ]
+
+        result = Ojs31Adapter("mgta").fetch_article_metadata(99)
+
+        doi_rows = [
+            row
+            for row in result["article_settings"]
+            if row["setting_name"] == "pub-id::doi"
+        ]
+
+        self.assertEqual(len(doi_rows), 1)
+        self.assertEqual(doi_rows[0]["setting_value"], "10.17076/native_doi")
+
+    @patch('src.adapters.ojs31.get_connection')
+    def test_whitespace_only_native_doi_is_replaced(self, mock_get_conn):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.__enter__ = lambda x: mock_cursor
+        mock_cursor.__exit__ = lambda x, y, z, w: None
+        mock_get_conn.return_value = mock_conn
+
+        mock_cursor.fetchone.side_effect = [
+            {
+                "article_id": 99,
+                "locale": "ru_RU",
+                "journal_id": 1,
+                "context_id": 1,
+                "section_id": 1,
+                "language": "ru",
+                "pages": "1-2",
+                "date_submitted": None,
+                "last_modified": None,
+                "status": 3,
+                "raw_citations_field": None,
+            },
+            None,
+            {
+                "journal_id": 1,
+                "path": "mgta",
+                "primary_locale": "en_US",
+                "enabled": 1,
+            },
+            None,
+        ]
+
+        mock_cursor.fetchall.side_effect = [
+            [],
+            [
+                {
+                    "locale": "",
+                    "setting_name": "pub-id::doi",
+                    "setting_value": "   ",
+                },
+                {
+                    "locale": "",
+                    "setting_name": "crossref::registeredDoi",
+                    "setting_value": "10.17076/test_doi",
+                },
+            ],
+            [],
+            [],
+            [],
+        ]
+
+        result = Ojs31Adapter("mgta").fetch_article_metadata(99)
+
+        doi_rows = [
+            row
+            for row in result["article_settings"]
+            if row["setting_name"] == "pub-id::doi"
+        ]
+
+        self.assertEqual(len(doi_rows), 1)
+        self.assertEqual(doi_rows[0]["setting_value"], "10.17076/test_doi")
+
+    @patch('src.adapters.ojs31.get_connection')
+    def test_no_doi_sources(self, mock_get_conn):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.__enter__ = lambda x: mock_cursor
+        mock_cursor.__exit__ = lambda x, y, z, w: None
+        mock_get_conn.return_value = mock_conn
+
+        mock_cursor.fetchone.side_effect = [
+            {
+                "article_id": 99,
+                "locale": "ru_RU",
+                "journal_id": 1,
+                "context_id": 1,
+                "section_id": 1,
+                "language": "ru",
+                "pages": "1-2",
+                "date_submitted": None,
+                "last_modified": None,
+                "status": 3,
+                "raw_citations_field": None,
+            },
+            None,
+            {
+                "journal_id": 1,
+                "path": "mgta",
+                "primary_locale": "en_US",
+                "enabled": 1,
+            },
+            None,
+        ]
+
+        mock_cursor.fetchall.side_effect = [
+            [],
+            [],
+            [],
+            [],
+            [],
+        ]
+
+        result = Ojs31Adapter("mgta").fetch_article_metadata(99)
+
+        doi_rows = [
+            row
+            for row in result["article_settings"]
+            if row["setting_name"] == "pub-id::doi"
+        ]
+
+        self.assertEqual(len(doi_rows), 0)
+
+
 if __name__ == '__main__':
     unittest.main()

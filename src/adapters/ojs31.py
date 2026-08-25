@@ -138,6 +138,37 @@ class Ojs31Adapter(OjsAdapter):
                 cursor.close()
             connection.close()
 
+    def _normalize_doi_settings(self, submission_settings: list[dict]) -> None:
+        crossref_doi = None
+        pubid_doi_rows = []
+        blank_pubid_doi_row = None
+
+        for row in submission_settings:
+            if row["setting_name"] == "crossref::registeredDoi":
+                if row["setting_value"] and str(row["setting_value"]).strip():
+                    crossref_doi = row["setting_value"].strip()
+            if row["setting_name"] == "pub-id::doi":
+                pubid_doi_rows.append(row)
+                if not row["setting_value"] or not str(row["setting_value"]).strip():
+                    blank_pubid_doi_row = row
+
+        if crossref_doi:
+            non_blank_pubid_doi = next(
+                (row for row in pubid_doi_rows if row["setting_value"] and str(row["setting_value"]).strip()),
+                None
+            )
+            if non_blank_pubid_doi:
+                return
+
+            if blank_pubid_doi_row:
+                blank_pubid_doi_row["setting_value"] = crossref_doi
+            else:
+                submission_settings.append({
+                    "locale": "",
+                    "setting_name": "pub-id::doi",
+                    "setting_value": crossref_doi,
+                })
+
     def fetch_article_metadata(self, article_id: int):
         connection = get_connection(self.source_key)
         cursor = None
@@ -244,21 +275,7 @@ class Ojs31Adapter(OjsAdapter):
             """, {"article_id": article_id})
             submission_settings = cursor.fetchall()
 
-            crossref_doi = None
-            has_pubid_doi = False
-            for row in submission_settings:
-                if row["setting_name"] == "crossref::registeredDoi":
-                    if row["setting_value"]:
-                        crossref_doi = row["setting_value"]
-                if row["setting_name"] == "pub-id::doi":
-                    has_pubid_doi = True
-
-            if not has_pubid_doi and crossref_doi:
-                submission_settings.append({
-                    "locale": "",
-                    "setting_name": "pub-id::doi",
-                    "setting_value": crossref_doi,
-                })
+            self._normalize_doi_settings(submission_settings)
 
             language = submission_result.get("language", "")
             if not language or not language.strip():
