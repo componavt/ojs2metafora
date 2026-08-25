@@ -162,6 +162,16 @@ def build_article_element(article_data: dict):
     # Pair authors by position
     author_pairs = zip_longest(ru_authors, en_authors, fillvalue=None)
     
+    # Log warning if both language lists are present but counts differ
+    if ru_authors and en_authors and len(ru_authors) != len(en_authors):
+        logger.warning(
+            "Article %s: mismatched bilingual author counts: ru=%d, en=%d; "
+            "continuing with positional pairing",
+            article_data.get("article_id"),
+            len(ru_authors),
+            len(en_authors),
+        )
+    
     # Convert flat list [{author_id, locale, setting_name, setting_value}, ...]
     # to nested dict {author_id: {setting_name: {locale: value}}}
     author_settings_raw = article_data.get('author_settings', [])
@@ -348,9 +358,12 @@ def build_article_element(article_data: dict):
     if ds:
         date_received_elem = etree.SubElement(dates_elem, 'dateReceived')
         date_received_elem.text = ds
-    publication = article_data.get('publishedinfo') or article_data.get('publication') or {}
-    date_published = publication.get('date_published')
-    dp = _fmt_date(date_published)
+    publication_date_override = article_data.get('publication_date')
+    dp = _fmt_date(publication_date_override)
+    if not dp:
+        published_info = article_data.get('published_info') or {}
+        date_published = published_info.get('date_published')
+        dp = _fmt_date(date_published)
     if dp:
         date_pub_elem = etree.SubElement(dates_elem, 'datePublication')
         date_pub_elem.text = dp

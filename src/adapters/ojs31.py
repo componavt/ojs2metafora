@@ -229,6 +229,14 @@ class Ojs31Adapter(OjsAdapter):
                 """, {"issue_id": issue_id})
                 issue_settings = cursor.fetchall()
 
+            publication_date = None
+            if issue_result and issue_result.get("year"):
+                try:
+                    year = int(issue_result["year"])
+                    publication_date = f"{year:04d}-01-01"
+                except (ValueError, TypeError):
+                    publication_date = None
+
             journal_id = submission_result["context_id"]
             section_id = submission_result["section_id"]
 
@@ -361,6 +369,7 @@ class Ojs31Adapter(OjsAdapter):
                 "authors": authors,
                 "author_settings": author_settings,
                 "citations": citations,
+                "publication_date": publication_date,
             }
         finally:
             if cursor is not None:

@@ -504,6 +504,108 @@ class TestOjs31AdapterDoiNormalization(unittest.TestCase):
 
         self.assertEqual(len(doi_rows), 0)
 
+    @patch('src.adapters.ojs31.get_connection')
+    def test_publication_date_uses_issue_year_for_published_submission(self, mock_get_conn):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.__enter__ = lambda x: mock_cursor
+        mock_cursor.__exit__ = lambda x, y, z, w: None
+        mock_get_conn.return_value = mock_conn
+
+        mock_cursor.fetchone.side_effect = [
+            {
+                "article_id": 100,
+                "locale": "ru_RU",
+                "journal_id": 1,
+                "context_id": 1,
+                "section_id": 1,
+                "language": "ru",
+                "pages": "1-2",
+                "date_submitted": None,
+                "last_modified": None,
+                "status": 3,
+                "raw_citations_field": None,
+            },
+            {
+                "published_submission_id": 50,
+                "issue_id": 11,
+                "date_published": "2023-01-18 12:09:32",
+                "seq": 1,
+            },
+            {
+                "issue_id": 11,
+                "journal_id": 1,
+                "volume": "14",
+                "number": "1",
+                "year": 2022,
+                "published": 1,
+                "date_published": "2023-01-18",
+            },
+            [],
+            {
+                "journal_id": 1,
+                "path": "mgta",
+                "primary_locale": "en_US",
+                "enabled": 1,
+            },
+            [],
+            {"section_id": 1, "journal_id": 1, "seq": 1, "hide_title": 0},
+            [],
+            [],
+            [],
+        ]
+
+        result = Ojs31Adapter("mgta").fetch_article_metadata(100)
+
+        self.assertIn("publication_date", result)
+        self.assertEqual(result["publication_date"], "2022-01-01")
+        self.assertEqual(result["published_info"]["date_published"], "2023-01-18 12:09:32")
+
+    @patch('src.adapters.ojs31.get_connection')
+    def test_no_publication_date_override_for_unpublished_submission(self, mock_get_conn):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.__enter__ = lambda x: mock_cursor
+        mock_cursor.__exit__ = lambda x, y, z, w: None
+        mock_get_conn.return_value = mock_conn
+
+        mock_cursor.fetchone.side_effect = [
+            {
+                "article_id": 200,
+                "locale": "ru_RU",
+                "journal_id": 1,
+                "context_id": 1,
+                "section_id": 1,
+                "language": "ru",
+                "pages": "1-2",
+                "date_submitted": None,
+                "last_modified": None,
+                "status": 3,
+                "raw_citations_field": None,
+            },
+            None,
+            None,
+            [],
+            {
+                "journal_id": 1,
+                "path": "mgta",
+                "primary_locale": "en_US",
+                "enabled": 1,
+            },
+            [],
+            None,
+            [],
+            [],
+            [],
+        ]
+
+        result = Ojs31Adapter("mgta").fetch_article_metadata(200)
+
+        self.assertIn("publication_date", result)
+        self.assertIsNone(result["publication_date"])
+
 
 if __name__ == '__main__':
     unittest.main()
