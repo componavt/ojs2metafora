@@ -62,6 +62,8 @@ profiles = [
     ("mgta", "mgta"),
 ]
 
+failures = []
+
 for source_key, expected_db in profiles:
     conn = None
     try:
@@ -73,10 +75,14 @@ for source_key, expected_db in profiles:
             journal_count = result['journal_count']
             print(f"{source_key} -> database {db_name}, journal_count {journal_count}")
     except Exception as e:
-        print(f"{source_key} -> ERROR: {e}")
+        print(f"{source_key} -> ERROR: {e}", file=sys.stderr)
+        failures.append(source_key)
     finally:
         if conn:
             conn.close()
+
+if failures:
+    raise SystemExit(1)
 DIAGET
 )
 
@@ -143,7 +149,12 @@ PYEOF
 else
     echo "--- Running OJS24-compatible diagnostic for mgta ---"
     echo "5a. generate_all.py dry-run for mgta journal"
-    python3 src/generate_all.py --source mgta --journal-path mgta --dry-run 2>&1 || true
+    python3 src/generate_all.py --source mgta --journal-path mgta --dry-run
+    
+    if [[ $? -ne 0 ]]; then
+        echo "ERROR: MGTA dry-run failed" >&2
+        exit 1
+    fi
     
     echo ""
     echo "MGTA connection and published-issue discovery succeeded."

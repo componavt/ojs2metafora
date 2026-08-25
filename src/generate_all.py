@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.issue_builder import build_journal_xml, SERIES_MAP
 from src.sources import SOURCES
 from src.validator import validate_xml
-from src.adapters import get_adapter
+from src.db_connector import get_connection
 
 
 logger = logging.getLogger(__name__)
@@ -25,18 +25,8 @@ def fetch_all_issues(journal_id=None, journal_path=None, year_from=None, year_to
     Either journal_id or journal_path must be provided.
     Returns a list of dicts with issue_id, number, year, date_published.
     """
-    adapter = get_adapter(source_key)
-    
-    if not hasattr(adapter, '_fetch_all_issues_raw'):
-        from src.db_connector import get_connection
-        connection = get_connection(source_key)
-        cursor = connection.cursor()
-        adapter._fetch_all_issues_raw = lambda jp, jid, yf, yt: _fetch_all_issues_raw(cursor, jp, jid, yf, yt)
-    
-    return adapter._fetch_all_issues_raw(journal_path, journal_id, year_from, year_to)
-
-
-def _fetch_all_issues_raw(cursor, journal_path, journal_id, year_from, year_to):
+    conn = get_connection(source_key)
+    cursor = conn.cursor()
     try:
         if journal_id is None and journal_path is not None:
             cursor.execute(
@@ -73,7 +63,12 @@ def _fetch_all_issues_raw(cursor, journal_path, journal_id, year_from, year_to):
 
         return issues
     finally:
-        pass
+        cursor.close()
+        conn.close()
+
+
+def _fetch_all_issues_raw(cursor, journal_path, journal_id, year_from, year_to):
+    raise RuntimeError("_fetch_all_issues_raw is no longer used; call fetch_all_issues directly")
 
 
 def main():

@@ -129,14 +129,20 @@ class TestSourcePropagation(unittest.TestCase):
         mock_get_section_titles.assert_called_once_with(10, source_key="mgta")
 
     def test_fetch_all_issues_passes_source_key(self):
-        with patch('src.generate_all.get_adapter') as mock_get_adapter:
-            mock_adapter = MagicMock()
-            mock_get_adapter.return_value = mock_adapter
-            mock_adapter.fetch_issue_article_ids.return_value = []
+        with patch('src.generate_all.get_connection') as mock_get_conn:
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+            mock_conn.cursor.return_value = mock_cursor
+            mock_get_conn.return_value = mock_conn
+
+            mock_cursor.fetchone.side_effect = [
+                None
+            ]
+            mock_cursor.fetchall.return_value = []
 
             fetch_all_issues(journal_id=1, source_key="mgta")
 
-            mock_get_adapter.assert_called_once_with("mgta")
+            mock_get_conn.assert_called_once_with("mgta")
 
 
 class TestCLISourceOption(unittest.TestCase):

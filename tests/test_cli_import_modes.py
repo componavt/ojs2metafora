@@ -76,5 +76,82 @@ import src.explore_db
                 os.remove(script_path)
 
 
+class TestRunTestScriptRegression(unittest.TestCase):
+    """Regression tests for src/run_test.sh shell script."""
+
+    _SCRIPT_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "run_test.sh"
+    )
+
+    def test_invalid_source_exits_nonzero(self):
+        """Verify bash src/run_test.sh --source invalid exits non-zero."""
+        result = subprocess.run(
+            ["/bin/bash", self._SCRIPT_PATH, "--source", "invalid"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown", result.stderr.lower())
+
+    def test_missing_source_value_exits_nonzero(self):
+        """Verify bash src/run_test.sh --source (no value) exits non-zero."""
+        result = subprocess.run(
+            ["/bin/bash", self._SCRIPT_PATH, "--source"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_mgta_dry_run_no_failure_masking(self):
+        """Assert MGTA dry-run command has no || true, 2>&1, or /dev/null."""
+        with open(self._SCRIPT_PATH, "r", encoding="utf-8") as f:
+            script_content = f.read()
+
+        lines = script_content.split("\n")
+        mgta_dry_run_found = False
+        for i, line in enumerate(lines):
+            if "generate_all.py --source mgta --journal-path mgta --dry-run" in line:
+                mgta_dry_run_found = True
+                self.assertNotIn("|| true", line)
+                self.assertNotIn("2>&1", line)
+                self.assertNotIn("/dev/null", line)
+                break
+
+        self.assertTrue(
+            mgta_dry_run_found,
+            "MGTA dry-run command not found in run_test.sh",
+        )
+
+    def test_mgta_success_messages_after_dry_run(self):
+        """Assert the three MGTA success messages occur after the dry-run command."""
+        with open(self._SCRIPT_PATH, "r", encoding="utf-8") as f:
+            script_content = f.read()
+
+        dry_run_idx = script_content.find("generate_all.py --source mgta --journal-path mgta --dry-run")
+        success_msg_1_idx = script_content.find("MGTA connection and published-issue discovery succeeded.")
+        success_msg_2_idx = script_content.find("OJS 3.1 metadata adapter is not implemented yet.")
+        success_msg_3_idx = script_content.find("Skipping article/XML OJS24 smoke tests for mgta.")
+
+        self.assertGreater(
+            success_msg_1_idx,
+            dry_run_idx,
+            "First MGTA success message should appear after dry-run command",
+        )
+        self.assertGreater(
+            success_msg_2_idx,
+            dry_run_idx,
+            "Second MGTA success message should appear after dry-run command",
+        )
+        self.assertGreater(
+            success_msg_3_idx,
+            dry_run_idx,
+            "Third MGTA success message should appear after dry-run command",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
 if __name__ == "__main__":
     unittest.main()
