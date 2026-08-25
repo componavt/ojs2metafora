@@ -28,9 +28,8 @@ def get_adapter(source_key: str):
         from src.adapters.ojs24 import Ojs24Adapter
         return Ojs24Adapter(source_key)
     elif adapter_key == "ojs31":
-        raise NotImplementedError(
-            f"OJS 3.1 metadata adapter is not yet implemented for source '{source_key}'"
-        )
+        from src.adapters.ojs31 import Ojs31Adapter
+        return Ojs31Adapter(source_key)
     else:
         raise NotImplementedError(
             f"Adapter '{adapter_key}' for source '{source_key}' is not supported"

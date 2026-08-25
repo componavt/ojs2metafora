@@ -67,10 +67,6 @@ def fetch_all_issues(journal_id=None, journal_path=None, year_from=None, year_to
         conn.close()
 
 
-def _fetch_all_issues_raw(cursor, journal_path, journal_id, year_from, year_to):
-    raise RuntimeError("_fetch_all_issues_raw is no longer used; call fetch_all_issues directly")
-
-
 def main():
     parser = argparse.ArgumentParser(
         description='Generate Metaphora XML files for ALL published issues of a journal'

@@ -123,29 +123,30 @@ class TestRunTestScriptRegression(unittest.TestCase):
         )
 
     def test_mgta_success_messages_after_dry_run(self):
-        """Assert the three MGTA success messages occur after the dry-run command."""
+        """Assert MGTA smoke test messages occur after the dry-run command."""
         with open(self._SCRIPT_PATH, "r", encoding="utf-8") as f:
             script_content = f.read()
 
         dry_run_idx = script_content.find("generate_all.py --source mgta --journal-path mgta --dry-run")
-        success_msg_1_idx = script_content.find("MGTA connection and published-issue discovery succeeded.")
-        success_msg_2_idx = script_content.find("OJS 3.1 metadata adapter is not implemented yet.")
-        success_msg_3_idx = script_content.find("Skipping article/XML OJS24 smoke tests for mgta.")
+        
+        fetch_success = script_content.find("fetch_article.py (article_id=42, json format)")
+        validate_success = script_content.find("main.py (issue_id=11, validate, verbose)")
+        package_success = script_content.find("Package import smoke test for article XML construction")
 
         self.assertGreater(
-            success_msg_1_idx,
+            fetch_success,
             dry_run_idx,
-            "First MGTA success message should appear after dry-run command",
+            "fetch_article.py success message should appear after dry-run command",
         )
         self.assertGreater(
-            success_msg_2_idx,
+            validate_success,
             dry_run_idx,
-            "Second MGTA success message should appear after dry-run command",
+            "main.py success message should appear after dry-run command",
         )
         self.assertGreater(
-            success_msg_3_idx,
+            package_success,
             dry_run_idx,
-            "Third MGTA success message should appear after dry-run command",
+            "Package import success message should appear after dry-run command",
         )
 
 

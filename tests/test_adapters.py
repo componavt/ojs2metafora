@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from src.adapters import get_adapter
 from src.adapters.base import OjsAdapter
 from src.adapters.ojs24 import Ojs24Adapter
+from src.adapters.ojs31 import Ojs31Adapter
 
 
 class TestGetAdapter(unittest.TestCase):
@@ -17,11 +18,10 @@ class TestGetAdapter(unittest.TestCase):
         self.assertIsInstance(result, Ojs24Adapter)
         self.assertEqual(result.source_key, "karrc")
 
-    def test_get_adapter_mgta_raises_not_implemented(self):
-        with self.assertRaises(NotImplementedError) as cm:
-            get_adapter("mgta")
-        self.assertIn("mgta", str(cm.exception))
-        self.assertIn("OJS 3.1", str(cm.exception))
+    def test_get_adapter_mgta_returns_ojs31_adapter(self):
+        result = get_adapter("mgta")
+        self.assertIsInstance(result, Ojs31Adapter)
+        self.assertEqual(result.source_key, "mgta")
 
     def test_get_adapter_unknown_source_raises_valueerror(self):
         with self.assertRaises(ValueError) as cm:

@@ -9,4 +9,4 @@ gitingest . \
   --include-pattern "src/*.sh" \
   --exclude-pattern "output/*" \
   --exclude-pattern "docs/*" \
-  --output out_gitingest/concat_11.md
+  --output out_gitingest/concat_12.md

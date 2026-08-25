@@ -121,7 +121,7 @@ if [[ "$SOURCE_KEY" == "karrc" ]]; then
         exit 1
     fi
     
-    echo "4e. Package import smoke test for article XML construction"
+    echo "4e. karrc package import smoke test for article XML construction"
     python3 - <<'PYEOF'
 import sys
 sys.path.insert(0, '.')
@@ -147,19 +147,53 @@ PYEOF
     fi
     
 else
-    echo "--- Running OJS24-compatible diagnostic for mgta ---"
+    echo "--- Running OJS31 smoke tests for mgta ---"
+    
     echo "5a. generate_all.py dry-run for mgta journal"
     python3 src/generate_all.py --source mgta --journal-path mgta --dry-run
-    
     if [[ $? -ne 0 ]]; then
-        echo "ERROR: MGTA dry-run failed" >&2
+        echo "ERROR: generate_all.py failed" >&2
         exit 1
     fi
     
-    echo ""
-    echo "MGTA connection and published-issue discovery succeeded."
-    echo "OJS 3.1 metadata adapter is not implemented yet."
-    echo "Skipping article/XML OJS24 smoke tests for mgta."
+    echo "5b. fetch_article.py (article_id=42, json format)"
+    python3 src/fetch_article.py --source mgta 42 --format json
+    if [[ $? -ne 0 ]]; then
+        echo "ERROR: fetch_article.py failed" >&2
+        exit 1
+    fi
+    
+    echo "5c. main.py (issue_id=11, validate, verbose)"
+    python3 src/main.py --source mgta 11 --validate --verbose
+    if [[ $? -ne 0 ]]; then
+        echo "ERROR: main.py failed" >&2
+        exit 1
+    fi
+    
+    echo "5d. Package import smoke test for article XML construction"
+    python3 - <<'PYEOF'
+import sys
+sys.path.insert(0, '.')
+from src.fetch_article import fetch_article_metadata
+from src.xml_generator import build_article_element
+from lxml import etree
+
+data = fetch_article_metadata(42, source_key="mgta")
+if data is None:
+    print("ERROR: article 42 not found")
+    sys.exit(1)
+el = build_article_element(data)
+if el is None:
+    print("ERROR: build_article_element returned None")
+    sys.exit(1)
+xml_str = etree.tostring(el, encoding='unicode')
+print("SUCCESS: article element built")
+print(xml_str[:1000])
+PYEOF
+    if [[ $? -ne 0 ]]; then
+        echo "ERROR: Package import smoke test failed" >&2
+        exit 1
+    fi
 fi
 
 echo "=== All steps complete ==="
