@@ -14,79 +14,64 @@ from src.issue_builder import (
     build_journal_xml,
 )
 from src.generate_all import fetch_all_issues
+from src.adapters import get_adapter
 
 
 class TestSourcePropagation(unittest.TestCase):
 
     def test_fetch_article_metadata_default_source(self):
-        with patch('src.fetch_article.get_connection') as mock_get_conn:
-            mock_conn = MagicMock()
-            mock_get_conn.return_value = mock_conn
-            mock_cursor = MagicMock()
-            mock_conn.cursor.return_value.__enter__ = lambda x: mock_cursor
-            mock_conn.cursor.return_value.__exit__ = lambda x, y, z, w: None
-
-            mock_cursor.fetchone.side_effect = [None]
+        with patch('src.fetch_article.get_adapter') as mock_get_adapter:
+            mock_adapter = MagicMock()
+            mock_get_adapter.return_value = mock_adapter
+            mock_adapter.fetch_article_metadata.return_value = None
 
             fetch_article_metadata(123)
 
-            mock_get_conn.assert_called_once_with("karrc")
+            mock_get_adapter.assert_called_once_with("karrc")
 
     def test_fetch_article_metadata_explicit_mgta(self):
-        with patch('src.fetch_article.get_connection') as mock_get_conn:
-            mock_conn = MagicMock()
-            mock_get_conn.return_value = mock_conn
-            mock_cursor = MagicMock()
-            mock_conn.cursor.return_value.__enter__ = lambda x: mock_cursor
-            mock_conn.cursor.return_value.__exit__ = lambda x, y, z, w: None
-
-            mock_cursor.fetchone.side_effect = [None]
+        with patch('src.fetch_article.get_adapter') as mock_get_adapter:
+            mock_adapter = MagicMock()
+            mock_get_adapter.return_value = mock_adapter
+            mock_adapter.fetch_article_metadata.return_value = None
 
             fetch_article_metadata(123, source_key="mgta")
 
-            mock_get_conn.assert_called_once_with("mgta")
+            mock_get_adapter.assert_called_once_with("mgta")
 
     def test_fetch_issue_article_ids_passes_source_key(self):
-        with patch('src.issue_builder.get_connection') as mock_get_conn:
-            mock_conn = MagicMock()
-            mock_get_conn.return_value = mock_conn
-            mock_cursor = MagicMock()
-            mock_conn.cursor.return_value.__enter__ = lambda x: mock_cursor
-            mock_conn.cursor.return_value.__exit__ = lambda x, y, z, w: None
-
-            mock_cursor.fetchall.return_value = []
+        with patch('src.issue_builder.get_adapter') as mock_get_adapter:
+            mock_adapter = MagicMock()
+            mock_get_adapter.return_value = mock_adapter
+            mock_adapter.fetch_issue_article_ids.return_value = []
 
             fetch_issue_article_ids(100, source_key="mgta")
 
-            mock_get_conn.assert_called_once_with("mgta")
+            mock_get_adapter.assert_called_once_with("mgta")
 
     def test_fetch_issue_metadata_passes_source_key(self):
-        with patch('src.issue_builder.get_connection') as mock_get_conn:
-            mock_conn = MagicMock()
-            mock_get_conn.return_value = mock_conn
-            mock_cursor = MagicMock()
-            mock_conn.cursor.return_value.__enter__ = lambda x: mock_cursor
-            mock_conn.cursor.return_value.__exit__ = lambda x, y, z, w: None
-
-            mock_cursor.fetchone.return_value = {'issue_id': 100, 'journal_id': 1, 'volume': 1, 'number': 1, 'year': 2024, 'date_published': None}
+        with patch('src.issue_builder.get_adapter') as mock_get_adapter:
+            mock_adapter = MagicMock()
+            mock_get_adapter.return_value = mock_adapter
+            mock_adapter.fetch_issue_metadata.return_value = {
+                'issue_id': 100, 'journal_id': 1, 'volume': 1, 'number': 1,
+                'year': 2024, 'date_published': None, 'print_issn': '', 'online_issn': '',
+                'title_ru': '', 'title_en': '', 'publisher': '', 'journal_path': ''
+            }
 
             fetch_issue_metadata(100, source_key="mgta")
 
-            mock_get_conn.assert_called_once_with("mgta")
+            mock_get_adapter.assert_called_once_with("mgta")
 
     def test_get_section_titles_passes_source_key(self):
-        with patch('src.issue_builder.get_connection') as mock_get_conn:
-            mock_conn = MagicMock()
-            mock_get_conn.return_value = mock_conn
-            mock_cursor = MagicMock()
-            mock_conn.cursor.return_value.__enter__ = lambda x: mock_cursor
-            mock_conn.cursor.return_value.__exit__ = lambda x, y, z, w: None
-
-            mock_cursor.fetchall.return_value = []
+        with patch('src.issue_builder.get_adapter') as mock_get_adapter:
+            mock_adapter = MagicMock()
+            mock_get_adapter.return_value = mock_adapter
+            mock_adapter.get_section_titles.return_value = {'title_ru': '', 'title_en': ''}
 
             get_section_titles(50, source_key="mgta")
 
-            mock_get_conn.assert_called_once_with("mgta")
+            mock_get_adapter.assert_called_once_with("mgta")
 
     def test_build_journal_xml_propagates_source_key(self):
         mock_fetch_issue_metadata = MagicMock(return_value={
@@ -144,18 +129,14 @@ class TestSourcePropagation(unittest.TestCase):
         mock_get_section_titles.assert_called_once_with(10, source_key="mgta")
 
     def test_fetch_all_issues_passes_source_key(self):
-        with patch('src.generate_all.get_connection') as mock_get_conn:
-            mock_conn = MagicMock()
-            mock_get_conn.return_value = mock_conn
-            mock_cursor = MagicMock()
-            mock_conn.cursor.return_value.__enter__ = lambda x: mock_cursor
-            mock_conn.cursor.return_value.__exit__ = lambda x, y, z, w: None
-
-            mock_cursor.fetchall.return_value = []
+        with patch('src.generate_all.get_adapter') as mock_get_adapter:
+            mock_adapter = MagicMock()
+            mock_get_adapter.return_value = mock_adapter
+            mock_adapter.fetch_issue_article_ids.return_value = []
 
             fetch_all_issues(journal_id=1, source_key="mgta")
 
-            mock_get_conn.assert_called_once_with("mgta")
+            mock_get_adapter.assert_called_once_with("mgta")
 
 
 class TestCLISourceOption(unittest.TestCase):

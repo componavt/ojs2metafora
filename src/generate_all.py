@@ -11,14 +11,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.db_connector import get_connection
 from src.issue_builder import build_journal_xml, SERIES_MAP
 from src.sources import SOURCES
 from src.validator import validate_xml
+from src.adapters import get_adapter
 
 
 logger = logging.getLogger(__name__)
-
 
 def fetch_all_issues(journal_id=None, journal_path=None, year_from=None, year_to=None, source_key: str = "karrc") -> list:
     """
@@ -26,11 +25,19 @@ def fetch_all_issues(journal_id=None, journal_path=None, year_from=None, year_to
     Either journal_id or journal_path must be provided.
     Returns a list of dicts with issue_id, number, year, date_published.
     """
-    conn = get_connection(source_key)
-    cursor = conn.cursor()
+    adapter = get_adapter(source_key)
+    
+    if not hasattr(adapter, '_fetch_all_issues_raw'):
+        from src.db_connector import get_connection
+        connection = get_connection(source_key)
+        cursor = connection.cursor()
+        adapter._fetch_all_issues_raw = lambda jp, jid, yf, yt: _fetch_all_issues_raw(cursor, jp, jid, yf, yt)
+    
+    return adapter._fetch_all_issues_raw(journal_path, journal_id, year_from, year_to)
 
+
+def _fetch_all_issues_raw(cursor, journal_path, journal_id, year_from, year_to):
     try:
-        # Resolve journal_id from journal_path if needed
         if journal_id is None and journal_path is not None:
             cursor.execute(
                 "SELECT journal_id, path FROM journals WHERE path = %s",
@@ -41,7 +48,6 @@ def fetch_all_issues(journal_id=None, journal_path=None, year_from=None, year_to
                 raise ValueError(f"Journal with path '{journal_path}' not found")
             journal_id = row['journal_id']
 
-        # Fetch all published issues
         query = """
             SELECT i.issue_id, i.number, i.year, i.date_published
             FROM issues i
@@ -54,7 +60,6 @@ def fetch_all_issues(journal_id=None, journal_path=None, year_from=None, year_to
         issues = []
         for row in rows:
             year = row['year']
-            # Apply year filters
             if year_from is not None and (year is None or int(year) < year_from):
                 continue
             if year_to is not None and (year is None or int(year) > year_to):
@@ -68,8 +73,7 @@ def fetch_all_issues(journal_id=None, journal_path=None, year_from=None, year_to
 
         return issues
     finally:
-        cursor.close()
-        conn.close()
+        pass
 
 
 def main():
@@ -109,6 +113,7 @@ def main():
     )
 
     if args.all_journals:
+        from src.db_connector import get_connection
         conn = get_connection(args.source)
         cursor = conn.cursor()
         try:
@@ -209,35 +214,31 @@ def main():
         journal_id = args.journal_id
         journal_path = args.journal_path
 
-        if journal_id is None:
+        if journal_id is None or journal_path is None:
+            from src.db_connector import get_connection
             conn = get_connection(args.source)
             cursor = conn.cursor()
             try:
-                cursor.execute(
-                    "SELECT journal_id, path FROM journals WHERE path = %s",
-                    (journal_path,)
-                )
-                row = cursor.fetchone()
-                if not row:
-                    logging.error(f"Journal with path '{journal_path}' not found in DB")
-                    sys.exit(1)
-                journal_id = row['journal_id']
-            finally:
-                cursor.close()
-                conn.close()
-        elif journal_path is None:
-            conn = get_connection(args.source)
-            cursor = conn.cursor()
-            try:
-                cursor.execute(
-                    "SELECT journal_id, path FROM journals WHERE journal_id = %s",
-                    (journal_id,)
-                )
-                row = cursor.fetchone()
-                if not row:
-                    logging.error(f"Journal with id {journal_id} not found in DB")
-                    sys.exit(1)
-                journal_path = row['path']
+                if journal_id is None:
+                    cursor.execute(
+                        "SELECT journal_id, path FROM journals WHERE path = %s",
+                        (journal_path,)
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        logging.error(f"Journal with path '{journal_path}' not found in DB")
+                        sys.exit(1)
+                    journal_id = row['journal_id']
+                elif journal_path is None:
+                    cursor.execute(
+                        "SELECT journal_id, path FROM journals WHERE journal_id = %s",
+                        (journal_id,)
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        logging.error(f"Journal with id {journal_id} not found in DB")
+                        sys.exit(1)
+                    journal_path = row['path']
             finally:
                 cursor.close()
                 conn.close()

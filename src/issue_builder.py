@@ -1,9 +1,9 @@
 import logging
 import re
 from lxml import etree
-from src.db_connector import get_connection
 from src.fetch_article import fetch_article_metadata, get_setting
 from src.xml_generator import build_article_element
+from src.adapters import get_adapter
 
 
 logger = logging.getLogger(__name__)
@@ -25,107 +25,14 @@ def fetch_issue_article_ids(issue_id: int, source_key: str = "karrc") -> list[di
     """
     Fetch the list of all published article IDs for a given issue_id from the DB.
     """
-    conn = get_connection(source_key)
-    cursor = conn.cursor()
-    
-    try:
-        query = """
-            SELECT
-                pa.article_id,
-                pa.seq,
-                a.section_id
-            FROM published_articles pa
-            JOIN articles a ON a.article_id = pa.article_id
-            WHERE pa.issue_id = %s
-              AND a.status = 3
-            ORDER BY pa.seq ASC
-        """
-        cursor.execute(query, (issue_id,))
-        rows = cursor.fetchall()
-        
-        result = []
-        for row in rows:
-            result.append({
-                'article_id': row['article_id'],
-                'seq': row['seq'],
-                'section_id': row['section_id']
-            })
-        
-        return result
-    finally:
-        cursor.close()
-        conn.close()
+    return get_adapter(source_key).fetch_issue_article_ids(issue_id)
 
 
 def fetch_issue_metadata(issue_id: int, source_key: str = "karrc") -> dict:
     """
     Fetch the issue row and its associated journal info.
     """
-    conn = get_connection(source_key)
-    cursor = conn.cursor()
-    
-    try:
-        # Fetch issue data
-        issue_query = """
-            SELECT i.issue_id, i.journal_id, i.volume, i.number, i.year,
-                   i.date_published
-            FROM issues i
-            WHERE i.issue_id = %s
-        """
-        cursor.execute(issue_query, (issue_id,))
-        issue_row = cursor.fetchone()
-        
-        if not issue_row:
-            raise ValueError(f"Issue with ID {issue_id} not found")
-        
-        issue_data = {
-            'issue_id': issue_row['issue_id'],
-            'journal_id': issue_row['journal_id'],
-            'volume': issue_row['volume'],
-            'number': issue_row['number'],
-            'year': issue_row['year'],
-            'date_published': issue_row['date_published']
-        }
-        
-        # Fetch journal path
-        journal_path_query = """
-            SELECT path FROM journals WHERE journal_id = %s
-        """
-        cursor.execute(journal_path_query, (issue_data['journal_id'],))
-        journal_path_row = cursor.fetchone()
-        issue_data['journal_path'] = journal_path_row['path'] if journal_path_row else ''
-        
-        # Fetch journal settings
-        journal_query = """
-            SELECT setting_name, locale, setting_value
-            FROM journal_settings
-            WHERE journal_id = %s
-              AND setting_name IN ('printIssn', 'onlineIssn', 'name', 'publisherInstitution')
-        """
-        cursor.execute(journal_query, (issue_data['journal_id'],))
-        journal_settings_rows = cursor.fetchall()
-        
-        # Process journal settings
-        journal_settings = {}
-        for row in journal_settings_rows:
-            setting_name = row['setting_name']
-            locale = row['locale']
-            setting_value = row['setting_value']
-            if setting_name not in journal_settings:
-                journal_settings[setting_name] = {}
-            journal_settings[setting_name][locale] = setting_value
-        
-        # Extract specific values
-        issue_data['print_issn'] = journal_settings.get('printIssn', {}).get('', '')
-        issue_data['online_issn'] = journal_settings.get('onlineIssn', {}).get('', '')
-        issue_data['title_ru'] = journal_settings.get('name', {}).get('ru_RU', '')
-        issue_data['title_en'] = journal_settings.get('name', {}).get('en_US', '')
-        issue_data['publisher'] = journal_settings.get('publisherInstitution', {}).get('', '')
-        
-        return issue_data
-    finally:
-        cursor.close()
-        conn.close()
+    return get_adapter(source_key).fetch_issue_metadata(issue_id)
 
 
 def compute_issue_pages(articles_data):
@@ -175,36 +82,7 @@ def get_section_titles(section_id: int, source_key: str = "karrc"):
     """
     Fetch section titles for a given section_id.
     """
-    conn = get_connection(source_key)
-    cursor = conn.cursor()
-    
-    try:
-        query = """
-            SELECT setting_name, locale, setting_value
-            FROM section_settings
-            WHERE section_id = %s
-              AND setting_name IN ('title', 'abbrev')
-        """
-        cursor.execute(query, (section_id,))
-        rows = cursor.fetchall()
-        
-        titles = {}
-        for row in rows:
-            setting_name = row['setting_name']
-            locale = row['locale']
-            setting_value = row['setting_value']
-            if setting_name not in titles:
-                titles[setting_name] = {}
-            titles[setting_name][locale] = setting_value
-        
-        # Extract title_ru and title_en
-        title_ru = titles.get('title', {}).get('ru_RU', '')
-        title_en = titles.get('title', {}).get('en_US', '')
-        
-        return {'title_ru': title_ru, 'title_en': title_en}
-    finally:
-        cursor.close()
-        conn.close()
+    return get_adapter(source_key).get_section_titles(section_id)
 
 
 def build_journal_xml(issue_id: int, titleid: str = '', source_key: str = "karrc"):
