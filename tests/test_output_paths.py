@@ -5,11 +5,14 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from unittest.mock import patch
+
 from src.output_paths import (
     get_output_namespace,
     default_output_dir,
     resolve_generation_output_dir,
     resolve_batch_output_dir,
+    get_upload_log_path,
     PROJECT_ROOT,
     OUTPUT_ROOT,
 )
@@ -86,6 +89,37 @@ class TestOutputPaths(unittest.TestCase):
 
     def test_output_root_constant(self):
         self.assertEqual(OUTPUT_ROOT, PROJECT_ROOT / "output")
+
+    def test_get_upload_log_path_karrc(self):
+        result = get_upload_log_path("karrc")
+        expected = default_output_dir("karrc") / "upload_log.json"
+        self.assertEqual(result, expected)
+        self.assertEqual(result.name, "upload_log.json")
+
+    def test_get_upload_log_path_mgta(self):
+        result = get_upload_log_path("mgta")
+        expected = default_output_dir("mgta") / "upload_log.json"
+        self.assertEqual(result, expected)
+        self.assertEqual(result.name, "upload_log.json")
+
+    def test_get_upload_log_path_resolves_source_namespace(self):
+        karrc_path = get_upload_log_path("karrc")
+        mgta_path = get_upload_log_path("mgta")
+        self.assertIn("karrc", str(karrc_path))
+        self.assertIn("mgta", str(mgta_path))
+        self.assertNotEqual(karrc_path, mgta_path)
+
+    def test_get_upload_log_path_unknown_source_raises(self):
+        with self.assertRaises(ValueError):
+            get_upload_log_path("invalid_source")
+
+    def test_get_upload_log_path_does_not_create_file_or_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch('src.output_paths.OUTPUT_ROOT', Path(tmpdir)):
+                result = get_upload_log_path("karrc")
+                log_path = Path(tmpdir) / "karrc" / "upload_log.json"
+                self.assertFalse(log_path.exists())
+                self.assertFalse(log_path.parent.exists())
 
 
 if __name__ == '__main__':

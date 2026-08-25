@@ -15,9 +15,14 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
-from src.output_paths import resolve_batch_output_dir
+from src.output_paths import (
+    get_upload_log_path,
+    resolve_batch_output_dir,
+)
 from src.sources import SOURCES
 
 API_KEY = os.getenv('METAFORA_API_KEY')
@@ -25,22 +30,21 @@ API_BASE = os.getenv('METAFORA_API_BASE', 'https://metafora.rcsi.science/api/v2'
 
 HEADERS = {'Api-Key': API_KEY}
 
-LOG_PATH = Path(__file__).parent.parent / 'output' / 'upload_log.json'
-
 current_op = {'file_path': None, 'file_uid': None}
 
 
 def load_log(log_path):
     if log_path.exists():
-        with open(log_path, 'r') as f:
+        with open(log_path, 'rb') as f:
             return json.load(f)
     return {}
 
 
 def save_log(log_path, log_data):
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, 'w') as f:
-        json.dump(log_data, f, indent=2)
+    if log_data is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, 'w') as f:
+            json.dump(log_data, f, indent=2)
 
 
 def normalize_xml_path(path_value: str) -> str:
@@ -153,7 +157,7 @@ def poll_status(file_uid, max_wait=300, interval=5, verbose=False,
         time.sleep(interval)
 
 
-def handle_upload_409(response, file_path, log_data, args, verbose=False):
+def handle_upload_409(response, file_path, log_path, log_data, args, verbose=False):
     try:
         body = response.json()
     except Exception:
@@ -174,14 +178,14 @@ def handle_upload_409(response, file_path, log_data, args, verbose=False):
                 'status_code': 2,
                 'status_text': 'Existing upload'
             }
-            save_log(LOG_PATH, log_data)
+            save_log(log_path, log_data)
             if getattr(args, 'no_wait', False):
                 print(f"Check later: python3 src/metafora_client.py status {exists_file_uid}")
                 return {'file_uid': exists_file_uid, 'skip_polling': True}
             else:
                 article_uids = poll_status(
                     exists_file_uid, max_wait=args.max_wait, interval=args.poll_interval, verbose=verbose,
-                    log_path=LOG_PATH, log_data=log_data, file_path=file_path
+                    log_path=log_path, log_data=log_data, file_path=file_path
                 )
                 if getattr(args, 'sign', False) and article_uids:
                     signed_count = sign_all(exists_file_uid, article_uids, verbose=verbose)
@@ -203,7 +207,9 @@ def cmd_upload(args):
         print(f"ERROR: File not found: {file_path}")
         sys.exit(1)
 
-    log_data = load_log(LOG_PATH)
+    source_key = getattr(args, "source", "karrc")
+    log_path = get_upload_log_path(source_key)
+    log_data = load_log(log_path)
     normalized_path = normalize_xml_path(file_path)
 
     entry = log_data.get(normalized_path)
@@ -233,7 +239,7 @@ def cmd_upload(args):
         print("Access denied — check METAFORA_API_KEY in .venv")
         sys.exit(1)
     if resp.status_code == 409:
-        result = handle_upload_409(resp, file_path, log_data, args, verbose=getattr(args, 'verbose', False))
+        result = handle_upload_409(resp, file_path, log_path, log_data, args, verbose=getattr(args, 'verbose', False))
         if result is None:
             sys.exit(1)
         if result.get('skip_polling'):
@@ -279,20 +285,22 @@ def cmd_upload(args):
         'status_code': 1,
         'status_text': 'Uploaded'
     }
-    save_log(LOG_PATH, log_data)
+    save_log(log_path, log_data)
     print(f"Uploaded: {Path(file_path).name} -> file_uid={file_uid[:16]}...")
 
     if not args.no_wait:
         article_uids = poll_status(
             file_uid, max_wait=args.max_wait, interval=args.poll_interval, verbose=args.verbose,
-            log_path=LOG_PATH, log_data=log_data, file_path=file_path
+            log_path=log_path, log_data=log_data, file_path=file_path
         )
         if args.sign and article_uids:
             sign_all(file_uid, article_uids, verbose=args.verbose)
 
 
 def cmd_status(args):
-    log_data = load_log(LOG_PATH)
+    source_key = getattr(args, "source", "karrc")
+    log_path = get_upload_log_path(source_key)
+    log_data = load_log(log_path)
     file_uid, file_path = resolve_file_uid(args.FILE_OR_UID, log_data, verbose=args.verbose)
 
     if args.verbose:
@@ -326,15 +334,21 @@ def cmd_status(args):
     for uid in articles:
         print(f"  {uid}")
 
-    if file_path and file_path in log_data:
+    if file_path:
         normalized_path = normalize_xml_path(file_path)
-        if normalized_path != file_path:
+        if normalized_path in log_data:
+            log_data[normalized_path]['status_code'] = xml_status.get('code')
+            log_data[normalized_path]['status_text'] = xml_status.get('status_text')
+            log_data[normalized_path]['article_uids'] = articles
+            save_log(log_path, log_data)
+        elif file_path in log_data:
+            normalized_path = normalize_xml_path(file_path)
             log_data[normalized_path] = log_data[file_path]
             del log_data[file_path]
-        log_data[normalized_path]['status_code'] = xml_status.get('code')
-        log_data[normalized_path]['status_text'] = xml_status.get('status_text')
-        log_data[normalized_path]['article_uids'] = articles
-        save_log(LOG_PATH, log_data)
+            log_data[normalized_path]['status_code'] = xml_status.get('code')
+            log_data[normalized_path]['status_text'] = xml_status.get('status_text')
+            log_data[normalized_path]['article_uids'] = articles
+            save_log(log_path, log_data)
 
 
 def sign_all(file_uid, article_uids, verbose=False):
@@ -368,7 +382,9 @@ def sign_all(file_uid, article_uids, verbose=False):
 
 
 def cmd_sign(args):
-    log_data = load_log(LOG_PATH)
+    source_key = getattr(args, "source", "karrc")
+    log_path = get_upload_log_path(source_key)
+    log_data = load_log(log_path)
     file_uid, file_path = resolve_file_uid(args.FILE_OR_UID, log_data, verbose=args.verbose)
 
     article_uids = []
@@ -393,7 +409,7 @@ def cmd_sign(args):
             if file_path:
                 normalized_path = normalize_xml_path(file_path)
                 log_data[normalized_path]['article_uids'] = article_uids
-                save_log(LOG_PATH, log_data)
+                save_log(log_path, log_data)
     if not article_uids:
         print("ERROR: No article UIDs found. Ensure the file is processed first.")
         sys.exit(1)
@@ -419,7 +435,8 @@ def cmd_sign_all(args):
         print(f"No XML files matching '{pattern}' in {base_dir}")
         sys.exit(0)
 
-    log_data = load_log(LOG_PATH)
+    log_path = get_upload_log_path(source_key)
+    log_data = load_log(log_path)
     total = len(files)
     signed_files = 0
     total_articles = 0
@@ -428,12 +445,12 @@ def cmd_sign_all(args):
 
     for fpath in files:
         fpath_str = str(fpath)
-        normalized_path = normalize_xml_path(fpath_str)
-        entry = log_data.get(normalized_path)
+        fpath_normalized = normalize_xml_path(fpath_str)
+        entry = log_data.get(fpath_normalized)
         if not entry:
             entry = log_data.get(fpath_str)
             if entry:
-                log_data[normalized_path] = entry
+                log_data[fpath_normalized] = entry
                 del log_data[fpath_str]
         if not entry:
             print(f"SKIP (not in upload log): {Path(fpath_str).name}")
@@ -458,7 +475,9 @@ def cmd_sign_all(args):
 
 
 def cmd_delete(args):
-    log_data = load_log(LOG_PATH)
+    source_key = getattr(args, "source", "karrc")
+    log_path = get_upload_log_path(source_key)
+    log_data = load_log(log_path)
     file_uid, file_path = resolve_file_uid(args.FILE_OR_UID, log_data, verbose=args.verbose)
 
     if args.verbose:
@@ -477,10 +496,10 @@ def cmd_delete(args):
             normalized_path = normalize_xml_path(file_path)
             if normalized_path in log_data:
                 del log_data[normalized_path]
-                save_log(LOG_PATH, log_data)
+                save_log(log_path, log_data)
             elif file_path in log_data:
                 del log_data[file_path]
-                save_log(LOG_PATH, log_data)
+                save_log(log_path, log_data)
     elif resp.status_code == 409:
         print("Cannot delete: file has signed publications")
         print(resp.text)
@@ -553,7 +572,8 @@ def cmd_upload_all(args):
         return
 
     base_dir_str = str(base_dir)
-    log_data = load_log(LOG_PATH)
+    log_path = get_upload_log_path(source_key)
+    log_data = load_log(log_path)
     total = len(files)
     success = 0
     already_processed = 0
@@ -605,7 +625,7 @@ def cmd_upload_all(args):
             failed += 1
             continue
         if resp.status_code == 409:
-            result = handle_upload_409(resp, fpath_str, log_data, args, verbose=args.verbose)
+            result = handle_upload_409(resp, fpath_str, log_path, log_data, args, verbose=args.verbose)
             if result is None:
                 print(f"  FAILED: {Path(fpath_str).name}")
                 failed += 1
@@ -664,12 +684,12 @@ def cmd_upload_all(args):
             'status_code': 1,
             'status_text': 'Uploaded'
         }
-        save_log(LOG_PATH, log_data)
+        save_log(log_path, log_data)
         print(f"Uploaded: {Path(fpath_str).name} -> file_uid={file_uid[:16]}...")
 
         article_uids = poll_status(
             file_uid, max_wait=args.max_wait, interval=args.poll_interval, verbose=args.verbose,
-            log_path=LOG_PATH, log_data=log_data, file_path=fpath_str
+            log_path=log_path, log_data=log_data, file_path=fpath_str
         )
 
         if article_uids:
@@ -706,18 +726,42 @@ def main():
     p_upload.add_argument('--max-wait', type=int, default=300, help='Maximum seconds to wait for processing (default: 300)')
     p_upload.add_argument('--poll-interval', type=int, default=5, help='Seconds between status checks (default: 5)')
     p_upload.add_argument('--verbose', action='store_true', help='Print raw HTTP requests/responses')
+    p_upload.add_argument(
+        '--source',
+        choices=sorted(SOURCES.keys()),
+        default="karrc",
+        help="Source profile used for the source-specific upload log (default: karrc)"
+    )
 
     p_status = subparsers.add_parser('status', help='Check status of an uploaded file')
     p_status.add_argument('FILE_OR_UID', help='Path to XML file or raw file_uid')
     p_status.add_argument('--verbose', action='store_true', help='Print raw HTTP requests/responses')
+    p_status.add_argument(
+        '--source',
+        choices=sorted(SOURCES.keys()),
+        default="karrc",
+        help="Source profile used for the source-specific upload log (default: karrc)"
+    )
 
     p_sign = subparsers.add_parser('sign', help='Sign all articles from a processed file')
     p_sign.add_argument('FILE_OR_UID', help='Path to XML file or raw file_uid')
     p_sign.add_argument('--verbose', action='store_true', help='Print raw HTTP requests/responses')
+    p_sign.add_argument(
+        '--source',
+        choices=sorted(SOURCES.keys()),
+        default="karrc",
+        help="Source profile used for the source-specific upload log (default: karrc)"
+    )
 
     p_delete = subparsers.add_parser('delete', help='Delete an uploaded file')
     p_delete.add_argument('FILE_OR_UID', help='Path to XML file or raw file_uid')
     p_delete.add_argument('--verbose', action='store_true', help='Print raw HTTP requests/responses')
+    p_delete.add_argument(
+        '--source',
+        choices=sorted(SOURCES.keys()),
+        default="karrc",
+        help="Source profile used for the source-specific upload log (default: karrc)"
+    )
 
     p_check_doi = subparsers.add_parser('check-doi', help='Check if a DOI is registered')
     p_check_doi.add_argument('DOI', help='DOI to check')
@@ -728,7 +772,15 @@ def main():
     p_upload_all.add_argument('--journal', help='Journal series name prefix (e.g. mathem)')
     p_upload_all.add_argument('--sign', action='store_true', help='Sign all articles after processing')
     p_upload_all.add_argument('--dry-run', action='store_true', help='List files without uploading')
-    p_upload_all.add_argument('--source', choices=sorted(SOURCES.keys()), default="karrc", help="Source profile used when YEAR_OR_DIRECTORY is a year (default: karrc)")
+    p_upload_all.add_argument(
+        '--source',
+        choices=sorted(SOURCES.keys()),
+        default="karrc",
+        help=(
+            "Source profile used for batch directory resolution and "
+            "the source-specific upload log (default: karrc)"
+        )
+    )
     p_upload_all.add_argument('--max-wait', type=int, default=300, help='Maximum seconds to wait for processing (default: 300)')
     p_upload_all.add_argument('--poll-interval', type=int, default=5, help='Seconds between status checks (default: 5)')
     p_upload_all.add_argument('--verbose', action='store_true', help='Print raw HTTP requests/responses')
@@ -749,7 +801,10 @@ def main():
         '--source',
         choices=sorted(SOURCES.keys()),
         default="karrc",
-        help="Source profile used when YEAR_OR_DIRECTORY is a year (default: karrc)"
+        help=(
+            "Source profile used for batch directory resolution and "
+            "the source-specific upload log (default: karrc)"
+        )
     )
     p_sign_all.add_argument(
         '--verbose',

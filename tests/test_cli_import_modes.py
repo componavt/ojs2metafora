@@ -18,6 +18,17 @@ class TestCLIImportModes(unittest.TestCase):
             result.returncode, 0, msg=f"stdout: {result.stdout}\nstderr: {result.stderr}"
         )
 
+    def test_metafora_client_help_succeeds(self):
+        """Verify python3 src/metafora_client.py --help returns exit code 0."""
+        result = subprocess.run(
+            [sys.executable, "src/metafora_client.py", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            result.returncode, 0, msg=f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
     def test_generate_all_help_succeeds(self):
         """Verify python3 src/generate_all.py --help returns exit code 0."""
         result = subprocess.run(
@@ -122,6 +133,69 @@ class TestRunTestScriptRegression(unittest.TestCase):
             "MGTA dry-run command not found in run_test.sh",
         )
 
+    def _run_metafora_cli(self, argv, expected_exit_nonzero=True, expect_stderr_contains=None):
+        result = subprocess.run(
+            [sys.executable, "src/metafora_client.py"] + argv,
+            capture_output=True,
+            text=True,
+        )
+        if expected_exit_nonzero:
+            self.assertNotEqual(result.returncode, 0, "Expected non-zero exit code")
+        else:
+            self.assertEqual(result.returncode, 0, "Expected zero exit code")
+        if expect_stderr_contains:
+            self.assertIn(expect_stderr_contains, result.stderr)
+        return result
+
+    def test_upload_invalid_source_rejected(self):
+        result = self._run_metafora_cli(
+            ['upload', 'test.xml', '--source', 'invalid'],
+            expected_exit_nonzero=True,
+            expect_stderr_contains='invalid choice',
+        )
+
+    def test_status_invalid_source_rejected(self):
+        result = self._run_metafora_cli(
+            ['status', 'test.xml', '--source', 'invalid'],
+            expected_exit_nonzero=True,
+            expect_stderr_contains='invalid choice',
+        )
+
+    def test_sign_invalid_source_rejected(self):
+        result = self._run_metafora_cli(
+            ['sign', 'test.xml', '--source', 'invalid'],
+            expected_exit_nonzero=True,
+            expect_stderr_contains='invalid choice',
+        )
+
+    def test_delete_invalid_source_rejected(self):
+        result = self._run_metafora_cli(
+            ['delete', 'test.xml', '--source', 'invalid'],
+            expected_exit_nonzero=True,
+            expect_stderr_contains='invalid choice',
+        )
+
+    def test_upload_all_invalid_source_rejected(self):
+        result = self._run_metafora_cli(
+            ['upload-all', '2022', '--source', 'invalid'],
+            expected_exit_nonzero=True,
+            expect_stderr_contains='invalid choice',
+        )
+
+    def test_sign_all_invalid_source_rejected(self):
+        result = self._run_metafora_cli(
+            ['sign-all', '2022', '--source', 'invalid'],
+            expected_exit_nonzero=True,
+            expect_stderr_contains='invalid choice',
+        )
+
+    def test_check_doi_source_rejected(self):
+        result = self._run_metafora_cli(
+            ['check-doi', '10.1234/test', '--source', 'invalid'],
+            expected_exit_nonzero=True,
+            expect_stderr_contains='unrecognized arguments',
+        )
+
     def test_mgta_success_messages_after_dry_run(self):
         """Assert MGTA smoke test messages occur after the dry-run command."""
         with open(self._SCRIPT_PATH, "r", encoding="utf-8") as f:
@@ -148,10 +222,6 @@ class TestRunTestScriptRegression(unittest.TestCase):
             dry_run_idx,
             "Package import success message should appear after dry-run command",
         )
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 if __name__ == "__main__":

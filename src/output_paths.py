@@ -84,3 +84,19 @@ def resolve_batch_output_dir(
     if path.is_dir():
         return path
     return default_output_dir(source_key) / year_or_directory
+
+
+def get_upload_log_path(source_key: str) -> Path:
+    """
+    Return the source-specific upload-log file path.
+
+    This function only resolves a path. It must not create directories or
+    files.
+    
+    Args:
+        source_key: Key from SOURCES dict (e.g., 'karrc', 'mgta')
+    
+    Returns:
+        Path to output/<namespace>/upload_log.json
+    """
+    return default_output_dir(source_key) / "upload_log.json"
