@@ -17,6 +17,9 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
+from src.output_paths import resolve_batch_output_dir
+from src.sources import SOURCES
+
 API_KEY = os.getenv('METAFORA_API_KEY')
 API_BASE = os.getenv('METAFORA_API_BASE', 'https://metafora.rcsi.science/api/v2')
 
@@ -401,11 +404,9 @@ def cmd_sign(args):
 def cmd_sign_all(args):
     year_or_dir = args.YEAR_OR_DIR
     journal = getattr(args, 'journal', None)
+    source_key = getattr(args, 'source', 'karrc')
 
-    if os.path.isdir(year_or_dir):
-        base_dir = Path(year_or_dir)
-    else:
-        base_dir = Path(__file__).parent.parent / 'output' / year_or_dir
+    base_dir = resolve_batch_output_dir(source_key, year_or_dir)
 
     if not base_dir.is_dir():
         print(f"ERROR: Directory not found: {base_dir}")
@@ -423,6 +424,7 @@ def cmd_sign_all(args):
     signed_files = 0
     total_articles = 0
     skipped = 0
+    base_dir_str = str(base_dir)
 
     for fpath in files:
         fpath_str = str(fpath)
@@ -526,11 +528,9 @@ def cmd_upload_all(args):
     journal = args.journal
     sign = args.sign
     dry_run = args.dry_run
+    source_key = getattr(args, 'source', 'karrc')
 
-    if os.path.isdir(year_or_dir):
-        base_dir = Path(year_or_dir)
-    else:
-        base_dir = Path(__file__).parent.parent / 'output' / year_or_dir
+    base_dir = resolve_batch_output_dir(source_key, year_or_dir)
 
     if not base_dir.is_dir():
         print(f"ERROR: Directory not found: {base_dir}")
@@ -552,6 +552,7 @@ def cmd_upload_all(args):
             print(f"  {f}")
         return
 
+    base_dir_str = str(base_dir)
     log_data = load_log(LOG_PATH)
     total = len(files)
     success = 0
@@ -560,7 +561,6 @@ def cmd_upload_all(args):
     failed = 0
     processed_articles = 0
     signed_articles = 0
-    base_dir_str = str(base_dir)
 
     print(f"\n================================================")
     print(f"Upload-all: {base_dir_str}")
@@ -728,6 +728,7 @@ def main():
     p_upload_all.add_argument('--journal', help='Journal series name prefix (e.g. mathem)')
     p_upload_all.add_argument('--sign', action='store_true', help='Sign all articles after processing')
     p_upload_all.add_argument('--dry-run', action='store_true', help='List files without uploading')
+    p_upload_all.add_argument('--source', choices=sorted(SOURCES.keys()), default="karrc", help="Source profile used when YEAR_OR_DIRECTORY is a year (default: karrc)")
     p_upload_all.add_argument('--max-wait', type=int, default=300, help='Maximum seconds to wait for processing (default: 300)')
     p_upload_all.add_argument('--poll-interval', type=int, default=5, help='Seconds between status checks (default: 5)')
     p_upload_all.add_argument('--verbose', action='store_true', help='Print raw HTTP requests/responses')
@@ -743,6 +744,12 @@ def main():
     p_sign_all.add_argument(
         '--journal',
         help='Filter by journal series prefix (e.g. mathem, biogeo)'
+    )
+    p_sign_all.add_argument(
+        '--source',
+        choices=sorted(SOURCES.keys()),
+        default="karrc",
+        help="Source profile used when YEAR_OR_DIRECTORY is a year (default: karrc)"
     )
     p_sign_all.add_argument(
         '--verbose',

@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.issue_builder import build_journal_xml, SERIES_MAP
+from src.output_paths import resolve_generation_output_dir
 from src.sources import SOURCES
 from src.validator import validate_xml
 
@@ -20,8 +21,8 @@ def main():
     parser.add_argument('issue_id', type=int, help='Integer ID of the OJS issue to export')
     parser.add_argument(
         '--output-dir',
-        default=str(Path(__file__).parent.parent / 'output'),
-        help='Directory for output files (default: <project_root>/output)'
+        default=None,
+        help='Base output directory. Defaults to output/<source namespace>; an explicit value is used literally.'
     )
     parser.add_argument('--titleid', default='', help='Metaphora titleid value for <titleid> element')
     parser.add_argument('--source', choices=sorted(SOURCES.keys()), default="karrc", help="Source profile to use (default: karrc)")
@@ -29,6 +30,8 @@ def main():
     parser.add_argument('--verbose', action='store_true', help='Enable DEBUG-level logging')
     
     args = parser.parse_args()
+    
+    output_dir = resolve_generation_output_dir(args.source, args.output_dir)
     
     # Configure logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
@@ -53,7 +56,7 @@ def main():
         number = meta.get('number', '0')
         
         # Create year directory
-        year_dir = Path(args.output_dir) / year
+        year_dir = output_dir / year
         year_dir.mkdir(parents=True, exist_ok=True)
         
         # Define output path with year and series name

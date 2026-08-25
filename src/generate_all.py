@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.issue_builder import build_journal_xml, SERIES_MAP
+from src.output_paths import resolve_generation_output_dir
 from src.sources import SOURCES
 from src.validator import validate_xml
 from src.db_connector import get_connection
@@ -74,7 +75,7 @@ def main():
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument('--journal-path', help='OJS journal path (e.g. "mathem", "biogeo")')
     group.add_argument('--journal-id', type=int, help='OJS journal_id integer')
-    parser.add_argument('--output-dir', default=str(Path(__file__).parent.parent / 'output'), help='Base output directory (default: <project_root>/output)')
+    parser.add_argument('--output-dir', default=None, help='Base output directory. Defaults to output/<source namespace>; an explicit value is used literally.')
     parser.add_argument('--titleid', default='', help='Metaphora titleid string (default: empty)')
     parser.add_argument('--validate', action='store_true', help='Validate each XML against schemas/journal3.xsd')
     parser.add_argument('--year-from', type=int, help='Only process issues from this year onward')
@@ -89,6 +90,8 @@ def main():
     )
 
     args = parser.parse_args()
+
+    output_dir = resolve_generation_output_dir(args.source, args.output_dir)
 
     # Validate that at least one of --journal-path, --journal-id, or --all-journals is provided
     if not args.all_journals and args.journal_path is None and args.journal_id is None:
@@ -163,7 +166,7 @@ def main():
                     year = meta.get('year', 'unknown')
                     number = meta.get('number', '0')
 
-                    year_dir = Path(args.output_dir) / year
+                    year_dir = output_dir / year
                     year_dir.mkdir(parents=True, exist_ok=True)
                     output_path = year_dir / f'{series_name}_n{number}.xml'
 
@@ -273,7 +276,7 @@ def main():
                 year = meta.get('year', 'unknown')
                 number = meta.get('number', '0')
 
-                year_dir = Path(args.output_dir) / year
+                year_dir = output_dir / year
                 year_dir.mkdir(parents=True, exist_ok=True)
                 output_path = year_dir / f'{series_name}_n{number}.xml'
 
@@ -300,7 +303,7 @@ def main():
                 failures += 1
                 continue
 
-        print(f"Done: {success}/{total} files generated to {args.output_dir}/")
+        print(f"Done: {success}/{total} files generated to {output_dir}/")
 
         if failures > 0:
             sys.exit(1)
