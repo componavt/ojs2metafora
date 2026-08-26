@@ -20,6 +20,7 @@ from src.metafora_client import (
     cmd_upload_all,
     cmd_sign_all,
     handle_upload_409,
+    resolve_file_uid,
     get_upload_log_path,
 )
 from src.output_paths import default_output_dir
@@ -209,6 +210,153 @@ class TestMetaforaClientSourceIsolation(unittest.TestCase):
         self.assertEqual(karrc_log_before, karrc_log_after)
 
     @patch('src.metafora_client.get_upload_log_path')
+    @patch('src.metafora_client.requests.get')
+    @patch('src.metafora_client.load_log')
+    @patch('src.metafora_client.save_log')
+    def test_status_raw_uid_bypasses_local_log(self, mock_save_log, mock_load_log, mock_get, mock_get_log_path):
+        raw_uid = "00000000-0000-0000-0000-000000000000"
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {
+            'data': {
+                'file_uid': raw_uid,
+                'xml': {'status': {'code': 2, 'status_text': 'Uploaded'}},
+                'pdf': {'uploaded': False},
+                'articles': [],
+            }
+        }
+        mock_load_log.return_value = {}
+
+        temp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: Path(temp_dir).unlink(missing_ok=True) if Path(temp_dir).exists() else None)
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        temp_log_path = Path(temp_dir) / "karrc" / "upload_log.json"
+
+        mock_get_log_path.return_value = temp_log_path
+
+        args = MagicMock()
+        args.FILE_OR_UID = raw_uid
+        args.verbose = False
+        args.source = "karrc"
+
+        cmd_status(args)
+
+        self.assertTrue(mock_get.called)
+        call_params = mock_get.call_args[1]['params']
+        self.assertEqual(call_params['file_uid'], raw_uid)
+
+        self.assertFalse(
+            temp_log_path.exists(),
+            "No log file should be created for raw UID status check"
+        )
+        self.assertFalse(
+            mock_save_log.called,
+            "save_log should not be called for raw UID status check with no file_path"
+        )
+
+    @patch('src.metafora_client.get_upload_log_path')
+    @patch('src.metafora_client.requests.get')
+    @patch('src.metafora_client.requests.put')
+    @patch('src.metafora_client.load_log')
+    @patch('src.metafora_client.save_log')
+    def test_sign_raw_uid_bypasses_local_file_lookup(
+            self, mock_save_log, mock_load_log, mock_put, mock_get, mock_get_log_path):
+        raw_uid = "11111111-1111-1111-1111-111111111111"
+        article_uid_1 = "art-a111-1111-1111-1111"
+        article_uid_2 = "art-a222-1111-1111-1111"
+
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {
+            'data': {
+                'file_uid': raw_uid,
+                'xml': {'status': {'code': 3, 'status_text': 'Processed'}},
+                'articles': [article_uid_1, article_uid_2],
+            }
+        }
+        mock_put.return_value.status_code = 200
+        mock_load_log.return_value = {}
+
+        temp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        temp_log_path = Path(temp_dir) / "mgta" / "upload_log.json"
+
+        mock_get_log_path.return_value = temp_log_path
+
+        args = MagicMock()
+        args.FILE_OR_UID = raw_uid
+        args.verbose = False
+        args.source = "mgta"
+
+        cmd_sign(args)
+
+        self.assertTrue(mock_put.called)
+        self.assertEqual(mock_put.call_count, 2)
+        called_uids = set()
+        for call in mock_put.call_args_list:
+            parts = call[0][0].split('/')
+            called_uids.add(parts[-3])
+        self.assertEqual(called_uids, {article_uid_1, article_uid_2})
+
+        self.assertFalse(
+            temp_log_path.exists(),
+            "No log file should be created for raw UID sign operation"
+        )
+        self.assertFalse(
+            mock_save_log.called,
+            "save_log should not be called for raw UID sign operation"
+        )
+
+    @patch('src.metafora_client.get_upload_log_path')
+    @patch('src.metafora_client.requests.delete')
+    @patch('src.metafora_client.load_log')
+    @patch('src.metafora_client.save_log')
+    def test_delete_raw_uid_bypasses_local_file_lookup(self, mock_save_log, mock_load_log, mock_delete, mock_get_log_path):
+        raw_uid = "22222222-2222-2222-2222-222222222222"
+
+        mock_delete.return_value.status_code = 204
+        mock_load_log.return_value = {}
+        mock_save_log.return_value = None
+
+        temp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        temp_log_path = Path(temp_dir) / "karrc" / "upload_log.json"
+
+        mock_get_log_path.return_value = temp_log_path
+
+        args = MagicMock()
+        args.FILE_OR_UID = raw_uid
+        args.verbose = False
+        args.source = "karrc"
+
+        cmd_delete(args)
+
+        self.assertTrue(mock_delete.called)
+        delete_url = mock_delete.call_args[0][0]
+        self.assertIn(raw_uid, delete_url)
+
+        self.assertFalse(
+            temp_log_path.exists(),
+            "No log file should be created/modified for raw UID delete operation"
+        )
+        self.assertFalse(
+            mock_save_log.called,
+            "save_log should not be called for raw UID delete operation"
+        )
+
+    def test_existing_xml_without_log_entry_raises_error_before_http_call(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            xml_path = tmp_path / "mathem_n1.xml"
+            xml_path.write_text("<article/>", encoding="utf-8")
+            log_path = tmp_path / "karrc" / "upload_log.json"
+            log_path.parent.mkdir(parents=True)
+
+            log_data = {}
+
+            with self.assertRaises(SystemExit) as cm:
+                resolve_file_uid(str(xml_path), log_data, verbose=False)
+            self.assertEqual(cm.exception.code, 1)
+
+    @patch('src.metafora_client.get_upload_log_path')
     def test_http_409_recovery_persists_only_to_selected_log(self, mock_get_log_path):
         karrc_log_data_before = json.loads(self.karrc_log_path.read_text())
         mgta_log_data_before = json.loads(self.mgta_log_path.read_text())
@@ -359,6 +507,38 @@ class TestLoadSaveLogFunctionality(unittest.TestCase):
         with open(log_path, 'r') as f:
             saved_data = json.load(f)
         self.assertEqual(saved_data, log_data)
+
+
+class TestRawFileUIDResolution(unittest.TestCase):
+    """Tests for raw file UID handling (bypassing local upload log)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+
+    def test_resolve_file_uid_raw_uuid(self):
+        raw_uid = "00000000-0000-0000-0000-000000000000"
+        log_data = {}
+        uid, file_path = resolve_file_uid(raw_uid, log_data, verbose=False)
+        self.assertEqual(uid, raw_uid)
+        self.assertIsNone(file_path)
+
+    def test_resolve_file_uid_with_existing_xml_in_log(self):
+        xml_path = Path(self.tmpdir.name) / "mathem_n1.xml"
+        xml_path.write_text("<article/>", encoding="utf-8")
+        normalized = str(xml_path.resolve())
+        log_data = {normalized: {'file_uid': 'existing-uid', 'status_code': 3}}
+        uid, file_path = resolve_file_uid(str(xml_path), log_data, verbose=False)
+        self.assertEqual(uid, 'existing-uid')
+        self.assertEqual(file_path, str(xml_path))
+
+    def test_resolve_file_uid_with_existing_xml_no_log_entry_raises(self):
+        xml_path = Path(self.tmpdir.name) / "mathem_n1.xml"
+        xml_path.write_text("<article/>", encoding="utf-8")
+        log_data = {}
+        with self.assertRaises(SystemExit) as cm:
+            resolve_file_uid(str(xml_path), log_data, verbose=False)
+        self.assertEqual(cm.exception.code, 1)
 
 
 if __name__ == '__main__':

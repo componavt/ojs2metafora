@@ -19,6 +19,35 @@ from already-generated Metafora XML and a prepared issue directory.
 
 ## Project layout
 
+### Two database profiles
+
+The system supports two database backends (OJS versions) with source-isolated configuration
+and output paths:
+
+| `--source` | OJS version | Purpose |
+|---|---|---|
+| `karrc` | OJS 2.4 | Труды КарНЦ РАН |
+| `mgta` | OJS 3.1 | Mathematical Game Theory and Applications |
+
+### Source-namespaced output directories
+
+Each source has its own output namespace. Generated XML files go to:
+```
+output/<source output_namespace>/<year>/<journal>_n<number>.xml
+```
+
+Upload logs are also source-isolated:
+```
+output/<source output_namespace>/upload_log.json
+```
+
+For example:
+
+- `output/karrc/2025/mathem_n4.xml` and `output/karrc/upload_log.json`
+- `output/mgta/2022/mgta_n1.xml` and `output/mgta/upload_log.json`
+
+`output/mgta/upload_log.json` is created automatically after the first successful MGTA upload.
+
 ```
 ojs2metafora/
 ├── .env                    # Secrets: Metafora API key + DB credentials
@@ -38,8 +67,14 @@ ojs2metafora/
 │   ├── xml2elibrary.py     # Convert Metafora XML → RCSI elibrary XML
 │   └── run_test.sh         # Developer smoke-test script (chmod +x applied)
 └── output/
-    └── 2025/
-        └── mathem_n4.xml   # Example generated file (year / series_nNUMBER.xml)
+    ├── karrc/
+    │   ├── upload_log.json
+    │   └── 2025/
+    │       └── mathem_n4.xml
+    └── mgta/
+        ├── upload_log.json
+        └── 2022/
+            └── mgta_n1.xml
 ```
 
 ## Setup
@@ -59,12 +94,19 @@ cp .env.example .env
 ```
 
 ```ini
-# OJS database
-DB_HOST=localhost
-DB_USER=ojs_user
-DB_PASSWORD=your_password
-DB_NAME=ojs_local
-DB_CHARSET=utf8mb4
+# OJS 2.4 (karrc) database
+OJS24_DBHOST=localhost
+OJS24_DBUSER=ojs_user
+OJS24_DBPASSWORD=
+OJS24_DBNAME=ojs
+OJS24_DBCHARSET=utf8mb4
+
+# OJS 3.1 (mgta) database
+MGTA_DBHOST=localhost
+MGTA_DBUSER=mgta_user
+MGTA_DBPASSWORD=
+MGTA_DBNAME=mgta
+MGTA_DBCHARSET=utf8mb4
 
 # Metafora API
 METAFORA_API_KEY=your_api_key_here
@@ -116,9 +158,26 @@ python3 src/generate_all.py --journal-path mathem --year-from 2020 --validate
 python3 src/generate_all.py --all-journals --dry-run
 ```
 
-Output: `output/<year>/<series>_n<number>.xml`
+Output: `output/<source>/<year>/<series>_n<number>.xml`
 
 **Step A2 — Upload all generated XML files**
+
+```bash
+# Upload all files for a specific source (recommended with --sign)
+python3 src/metafora_client.py upload-all 2025 --source karrc --sign
+python3 src/metafora_client.py upload-all 2022 --source mgta --sign
+
+# Upload only one journal series
+python3 src/metafora_client.py upload-all 2025 --source karrc --journal mathem --sign
+python3 src/metafora_client.py upload-all 2022 --source mgta --journal mgta --sign
+
+# Preview which files would be uploaded (no actual upload)
+python3 src/metafora_client.py upload-all 2025 --source karrc --dry-run
+python3 src/metafora_client.py upload-all 2022 --source mgta --dry-run
+
+# Optional: allow more time for a large batch if Metafora is slow
+python3 src/metafora_client.py upload-all 2025 --source karrc --sign --max-wait 600 --poll-interval 10
+```
 
 ### Example: upload new 2026 Biogeography issues
 
@@ -139,17 +198,21 @@ The upload command processes every XML file in `output/2026`. Files already proc
 **Step A2 — Upload all generated XML files**
 
 ```bash
-# Upload all files for a year and sign automatically (recommended)
-python3 src/metafora_client.py upload-all 2015 --sign
+# Upload all files for a specific source and sign automatically (recommended)
+python3 src/metafora_client.py upload-all 2025 --source karrc --sign
+python3 src/metafora_client.py upload-all 2022 --source mgta --sign
 
 # Upload only one journal series
-python3 src/metafora_client.py upload-all 2015 --journal mathem --sign
+python3 src/metafora_client.py upload-all 2025 --source karrc --journal mathem --sign
+python3 src/metafora_client.py upload-all 2022 --source mgta --journal mgta --sign
 
 # Preview which files would be uploaded (no actual upload)
-python3 src/metafora_client.py upload-all 2015 --dry-run
+python3 src/metafora_client.py upload-all 2025 --source karrc --dry-run
+python3 src/metafora_client.py upload-all 2022 --source mgta --dry-run
 
 # Optional: allow more time for a large batch if Metafora is slow
-python3 src/metafora_client.py upload-all 2015 --sign --max-wait 600 --poll-interval 10
+python3 src/metafora_client.py upload-all 2025 --source karrc --sign --max-wait 600 --poll-interval 10
+python3 src/metafora_client.py upload-all 2022 --source mgta --sign --max-wait 600 --poll-interval 10
 ```
 
 The default waiting settings are suitable for normal use; this optional form is only for unusually slow processing.
@@ -167,14 +230,27 @@ When Metafora returns `XML_ALREADY_EXISTS`, the client uses the server-provided 
 
 ```bash
 # Sign all articles for all files in a year
-python3 src/metafora_client.py sign-all 2015
+python3 src/metafora_client.py sign-all 2025 --source karrc
+python3 src/metafora_client.py sign-all 2022 --source mgta
 
 # Sign only one journal series
-python3 src/metafora_client.py sign-all 2015 --journal mathem
+python3 src/metafora_client.py sign-all 2025 --source karrc --journal mathem
+python3 src/metafora_client.py sign-all 2022 --source mgta --journal mgta
 ```
 
 > `sign-all` is idempotent: already-signed articles return HTTP 409,
 > which is treated as success. Safe to re-run.
+
+---
+
+### Note on `YEAR_OR_DIRECTORY` behavior
+
+For batch commands (`upload-all`, `sign-all`), `YEAR_OR_DIRECTORY` behaves as follows:
+
+- If an existing directory is provided, it is used literally.
+- Otherwise, the value is treated as a year and resolved under the selected source namespace:
+  - `2025 --source karrc` → `output/karrc/2025/`
+  - `2022 --source mgta` → `output/mgta/2022/`
 
 ---
 
@@ -183,12 +259,16 @@ python3 src/metafora_client.py sign-all 2015 --journal mathem
 **Step B1 — Generate XML**
 
 ```bash
-python3 src/main.py 151 --validate
-python3 src/main.py 151 --titleid 38962 --validate
-python3 src/main.py 151 --validate --verbose
+python3 src/main.py --source karrc 151 --validate
+python3 src/main.py --source karrc 151 --titleid 38962 --validate
+python3 src/main.py --source karrc 151 --validate --verbose
+
+python3 src/main.py --source mgta 11 --validate
+python3 src/main.py --source mgta 11 --titleid 12345 --validate
+python3 src/main.py --source mgta 11 --validate --verbose
 ```
 
-> `151` is the `issue_id` from the OJS `issues` table.
+> `151` or `11` is the `issue_id` from the OJS `issues` table.
 > Find it with:
 > ```sql
 > SELECT issue_id, number, year FROM issues
@@ -202,10 +282,10 @@ python3 src/main.py 151 --validate --verbose
 
 ```bash
 # Upload, wait for processing, then sign automatically
-python3 src/metafora_client.py upload output/2025/mathem_n4.xml --sign
+python3 src/metafora_client.py upload output/karrc/2025/mathem_n4.xml --source karrc --sign
 
 # Upload with full HTTP logging
-python3 src/metafora_client.py upload output/2025/mathem_n4.xml --verbose
+python3 src/metafora_client.py upload output/mgta/2022/mgta_n1.xml --source mgta --verbose
 ```
 
 > 🚫 **HTTP 422** — Metafora rejected the XML (e.g. missing `<artType>`
@@ -214,14 +294,15 @@ python3 src/metafora_client.py upload output/2025/mathem_n4.xml --verbose
 **Step B3 — Sign (if `--sign` was omitted in Step B2)**
 
 ```bash
-python3 src/metafora_client.py sign output/2025/mathem_n4.xml
+python3 src/metafora_client.py sign output/karrc/2025/mathem_n4.xml --source karrc
+python3 src/metafora_client.py sign output/mgta/2022/mgta_n1.xml --source mgta
 ```
 
 ---
 
 ### Notes for `upload` and `upload-all`
 
-- `upload-all YEAR --sign` uploads each XML file, waits for Metafora processing, and signs the resulting publications.
+- `upload-all YEAR --source <karrc|mgta> --sign` uploads each XML file, waits for Metafora processing, and signs the resulting publications.
 - Files already processed by Metafora are skipped, so rerunning the command is safe.
 - If Metafora reports `XML_ALREADY_EXISTS`, the client uses the existing server file UID and continues.
 - If processing is interrupted or takes too long, use the file UID printed by the program:
@@ -279,24 +360,36 @@ Notes:
 
 ---
 
-### Other useful commands
+### Status, sign, delete: source-aware and raw UID support
+
+Upload, sign, and delete commands support both XML file paths and raw file UIDs.
+
+**With file path** (requires `--source` to select the upload log):
 
 ```bash
-# Check processing status (by file path or raw UUID)
-python3 src/metafora_client.py status output/2025/mathem_n4.xml
-python3 src/metafora_client.py status xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-
-# Delete a file from Metafora (e.g. to re-upload a corrected version)
-python3 src/metafora_client.py delete output/2025/mathem_n4.xml
-
-# Check whether a DOI is already registered in Metafora
-python3 src/metafora_client.py check-doi 10.14529/mmph250101
-
-# Continue after an interruption or a processing timeout.
-# Use the file UID printed by the program.
-python3 src/metafora_client.py status FILE_UID
-python3 src/metafora_client.py sign FILE_UID
+python3 src/metafora_client.py status output/karrc/2025/mathem_n4.xml --source karrc
+python3 src/metafora_client.py sign output/mgta/2022/mgta_n1.xml --source mgta
+python3 src/metafora_client.py delete output/karrc/2025/mathem_n4.xml --source karrc
 ```
+
+**With raw file UID** (bypasses local upload log, no `--source` required):
+
+```bash
+python3 src/metafora_client.py status xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+python3 src/metafora_client.py sign xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+python3 src/metafora_client.py delete xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+This recovery mechanism is useful when you have only the Metafora file UID (e.g., from a previous incomplete operation).
+
+**Check DOI** (source-independent, does not accept `--source`):
+
+```bash
+python3 src/metafora_client.py check-doi 10.14529/mmph250101
+python3 src/metafora_client.py check-doi 10.17076/mgta_2022_1_42
+```
+
+---
 
 ---
 
@@ -335,9 +428,38 @@ regenerate the XML.
 
 ---
 
-## Upload log
+## Output path rules
 
-Successful uploads are recorded in `output/upload_log.json` with the Metafora file UID, processing status, and article UIDs. The `status`, `sign`, and `delete` commands use this information automatically when an XML file path is supplied.
+When `--output-dir` is omitted, generated XML goes to:
+```
+output/<source output_namespace>/<year>/
+```
+
+When `--output-dir` is provided explicitly, it is used literally. The source namespace is not appended.
+
+Examples:
+
+```bash
+python3 src/main.py --source karrc 151 --validate
+# output/karrc/2025/mathem_n4.xml
+
+python3 src/main.py --source mgta 11 --validate
+# output/mgta/2022/mgta_n1.xml
+
+python3 src/main.py --source mgta 11 --output-dir /tmp/mgta-check --validate
+# /tmp/mgta-check/2022/mgta_n1.xml
+```
+
+## Source-specific upload logs
+
+Each source has its own isolated upload log:
+
+- `output/karrc/upload_log.json`
+- `output/mgta/upload_log.json`
+
+Keys in these logs are normalized absolute XML file paths. Successful uploads record the Metafora file UID, processing status, and article UIDs.
+
+The `status`, `sign`, and `delete` commands use this information automatically when an XML file path is supplied.
 
 If Metafora reports `XML_ALREADY_EXISTS`, the client uses the existing server file UID and continues safely. If processing is interrupted or takes too long, use the file UID printed by the program:
 

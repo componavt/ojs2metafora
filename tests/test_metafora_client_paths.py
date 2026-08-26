@@ -1,9 +1,12 @@
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from unittest.mock import patch
 
 
 class TestMetaforaClientBatchPaths(unittest.TestCase):
@@ -23,17 +26,40 @@ class TestMetaforaClientBatchPaths(unittest.TestCase):
         except SystemExit as e:
             return e.code
 
-    def test_upload_all_with_year_mgta_source(self):
-        # This verifies that the path resolution correctly uses mgta namespace
-        argv = ['upload-all', '2022', '--source', 'mgta', '--dry-run']
-        result = self._run_main(argv)
-        # The mgta/2022 directory exists from manual testing
-        self.assertEqual(result, 0, "Command succeeds when directory exists")
 
-    def test_upload_all_with_year_karrc_default(self):
-        argv = ['upload-all', '2025', '--dry-run']
-        result = self._run_main(argv)
-        self.assertEqual(result, 0, "Command should succeed in dry-run mode")
+class TestMetaforaClientSafetyRegression(TestMetaforaClientBatchPaths):
+
+    @patch('src.metafora_client.resolve_batch_output_dir')
+    @patch('src.metafora_client.get_upload_log_path')
+    def test_upload_all_with_year_mgta_source(self, mock_get_log_path, mock_resolve_dir):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            batch_dir = tmp_path / "mgta" / "2022"
+            batch_dir.mkdir(parents=True)
+            log_path = tmp_path / "mgta" / "upload_log.json"
+
+            mock_resolve_dir.return_value = batch_dir
+            mock_get_log_path.return_value = log_path
+
+            argv = ['upload-all', '2022', '--source', 'mgta', '--dry-run']
+            result = self._run_main(argv)
+            self.assertEqual(result, 0, "Command succeeds in dry-run mode")
+
+    @patch('src.metafora_client.resolve_batch_output_dir')
+    @patch('src.metafora_client.get_upload_log_path')
+    def test_upload_all_with_year_karrc_default(self, mock_get_log_path, mock_resolve_dir):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            batch_dir = tmp_path / "karrc" / "2025"
+            batch_dir.mkdir(parents=True)
+            log_path = tmp_path / "karrc" / "upload_log.json"
+
+            mock_resolve_dir.return_value = batch_dir
+            mock_get_log_path.return_value = log_path
+
+            argv = ['upload-all', '2025', '--dry-run']
+            result = self._run_main(argv)
+            self.assertEqual(result, 0, "Command should succeed in dry-run mode")
 
     def test_upload_all_explicit_dir_is_literal(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -41,17 +67,37 @@ class TestMetaforaClientBatchPaths(unittest.TestCase):
             result = self._run_main(argv)
             self.assertEqual(result, 0, "Command should succeed on empty directory in dry-run")
 
-    def test_sign_all_with_year_mgta_source(self):
-        # This verifies that the path resolution correctly uses mgta namespace
-        argv = ['sign-all', '2022', '--source', 'mgta']
-        result = self._run_main(argv)
-        # The mgta/2022 directory exists from manual testing
-        self.assertEqual(result, 0, "Command succeeds when directory exists")
+    @patch('src.metafora_client.resolve_batch_output_dir')
+    @patch('src.metafora_client.get_upload_log_path')
+    def test_sign_all_with_year_mgta_source(self, mock_get_log_path, mock_resolve_dir):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            batch_dir = tmp_path / "mgta" / "2022"
+            batch_dir.mkdir(parents=True)
+            log_path = tmp_path / "mgta" / "upload_log.json"
 
-    def test_sign_all_with_year_karrc_default(self):
-        argv = ['sign-all', '2025']
-        result = self._run_main(argv)
-        self.assertEqual(result, 0, "Command should succeed (no files found)")
+            mock_resolve_dir.return_value = batch_dir
+            mock_get_log_path.return_value = log_path
+
+            argv = ['sign-all', '2022', '--source', 'mgta']
+            result = self._run_main(argv)
+            self.assertEqual(result, 0, "Command succeeds (no files found)")
+
+    @patch('src.metafora_client.resolve_batch_output_dir')
+    @patch('src.metafora_client.get_upload_log_path')
+    def test_sign_all_with_year_karrc_default(self, mock_get_log_path, mock_resolve_dir):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            batch_dir = tmp_path / "karrc" / "2025"
+            batch_dir.mkdir(parents=True)
+            log_path = tmp_path / "karrc" / "upload_log.json"
+
+            mock_resolve_dir.return_value = batch_dir
+            mock_get_log_path.return_value = log_path
+
+            argv = ['sign-all', '2025']
+            result = self._run_main(argv)
+            self.assertEqual(result, 0, "Command should succeed (no files found)")
 
     def test_upload_all_invalid_source_rejected(self):
         argv = ['upload-all', '2022', '--source', 'invalid']
