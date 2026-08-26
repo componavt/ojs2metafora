@@ -185,37 +185,15 @@ From the project root:
 
 ```bash
 # Generate or refresh XML files for all 2026 Biogeography issues.
-python3 src/generate_all.py --journal-path biogeo --year-from 2026 --year-to 2026 --validate
+python3 src/generate_all.py --source karrc --journal-path biogeo --year-from 2026 --year-to 2026 --validate
 
-# Upload all 2026 XML files and sign their publications.
-python3 src/metafora_client.py upload-all 2026 --sign
+# Upload all 2026 KarRC XML files and sign their publications.
+python3 src/metafora_client.py upload-all 2026 --source karrc --sign
 ```
 
-The upload command processes every XML file in `output/2026`. Files already processed by Metafora are skipped, so it is safe to run the command again.
+The upload command processes every XML file in `output/karrc/2026`. Files already processed by Metafora are skipped, so it is safe to run the command again.
 
----
-
-**Step A2 — Upload all generated XML files**
-
-```bash
-# Upload all files for a specific source and sign automatically (recommended)
-python3 src/metafora_client.py upload-all 2025 --source karrc --sign
-python3 src/metafora_client.py upload-all 2022 --source mgta --sign
-
-# Upload only one journal series
-python3 src/metafora_client.py upload-all 2025 --source karrc --journal mathem --sign
-python3 src/metafora_client.py upload-all 2022 --source mgta --journal mgta --sign
-
-# Preview which files would be uploaded (no actual upload)
-python3 src/metafora_client.py upload-all 2025 --source karrc --dry-run
-python3 src/metafora_client.py upload-all 2022 --source mgta --dry-run
-
-# Optional: allow more time for a large batch if Metafora is slow
-python3 src/metafora_client.py upload-all 2025 --source karrc --sign --max-wait 600 --poll-interval 10
-python3 src/metafora_client.py upload-all 2022 --source mgta --sign --max-wait 600 --poll-interval 10
-```
-
-The default waiting settings are suitable for normal use; this optional form is only for unusually slow processing.
+The default waiting settings are suitable for normal use; the `--max-wait`/`--poll-interval` form is only for unusually slow processing.
 
 If processing is interrupted or Metafora needs longer than expected, use the file UID printed by the program:
 
@@ -325,7 +303,7 @@ image. The script generates only the XML — it does not modify or move any file
 
 ```bash
 python3 src/xml2elibrary.py \
-    output/2025/precambrian_n5.xml \
+    output/karrc/2025/precambrian_n5.xml \
     output/journals.rcsi.science/2025/1997-3217_2025_5 \
     --output output/journals.rcsi.science/2025/1997-3217_2025_5/1997-3217_2025_5.xml \
     --validate --verbose
@@ -385,7 +363,7 @@ This recovery mechanism is useful when you have only the Metafora file UID (e.g.
 **Check DOI** (source-independent, does not accept `--source`):
 
 ```bash
-python3 src/metafora_client.py check-doi 10.14529/mmph250101
+python3 src/metafora_client.py check-doi 10.17076/mat2099
 python3 src/metafora_client.py check-doi 10.17076/mgta_2022_1_42
 ```
 
