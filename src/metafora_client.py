@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
+from dataclasses import dataclass
 from src.output_paths import (
     get_upload_log_path,
     resolve_batch_output_dir,
@@ -29,6 +30,28 @@ API_KEY = os.getenv('METAFORA_API_KEY')
 API_BASE = os.getenv('METAFORA_API_BASE', 'https://metafora.rcsi.science/api/v2')
 
 HEADERS = {'Api-Key': API_KEY}
+
+
+def safe_request(request_func, *args, **kwargs):
+    """
+    Execute a requests function and convert transport exceptions into
+    a `(response, error_message)` result.
+
+    Returns:
+        tuple[requests.Response | None, str | None]:
+        exactly one item is non-None.
+    """
+    try:
+        return request_func(*args, **kwargs), None
+    except requests.exceptions.RequestException as exc:
+        return None, str(exc)
+
+
+@dataclass
+class SignResult:
+    attempted: int
+    signed: int
+    failed: int
 
 current_op = {'file_path': None, 'file_uid': None}
 
@@ -99,17 +122,28 @@ def poll_status(file_uid, max_wait=300, interval=5, verbose=False,
             current_op['file_uid'] = None
             return None
 
-        resp = requests.get(
+        response, error = safe_request(
+            requests.get,
             f"{API_BASE}/files/status/",
             params={'file_uid': file_uid},
             headers=HEADERS,
             timeout=30
         )
 
-        if verbose:
+        if verbose and response:
             print(f"-> GET {API_BASE}/files/status/?file_uid={file_uid}")
-            print(f"<- {resp.status_code} {resp.reason}")
+            print(f"<- {response.status_code} {response.reason}")
 
+        if error:
+            print(
+                f"ERROR: network request failed while polling {filename}: {error}"
+            )
+            print(f"Check later: python3 src/metafora_client.py status {file_uid}")
+            print(f"Sign later:  python3 src/metafora_client.py sign {file_uid}")
+            current_op['file_uid'] = None
+            return None
+
+        resp = response
         if resp.status_code != 200:
             print(f"ERROR: status request failed for {filename}")
             print(f"  HTTP {resp.status_code} {resp.reason}")
@@ -188,10 +222,10 @@ def handle_upload_409(response, file_path, log_path, log_data, args, verbose=Fal
                     log_path=log_path, log_data=log_data, file_path=file_path
                 )
                 if getattr(args, 'sign', False) and article_uids:
-                    signed_count = sign_all(exists_file_uid, article_uids, verbose=verbose)
+                    sign_result = sign_all(exists_file_uid, article_uids, verbose=verbose)
+                    return {'file_uid': exists_file_uid, 'article_uids': article_uids, 'recovered': True, 'sign_result': sign_result}
                 else:
-                    signed_count = 0
-                return {'file_uid': exists_file_uid, 'article_uids': article_uids, 'recovered': True, 'signed_count': signed_count}
+                    return {'file_uid': exists_file_uid, 'article_uids': article_uids, 'recovered': True, 'sign_result': SignResult(attempted=0, signed=0, failed=0)}
         else:
             print(f"ERROR: HTTP 409 XML_ALREADY_EXISTS but no exists_file_uid in response")
             return None
@@ -226,14 +260,23 @@ def cmd_upload(args):
     if getattr(args, 'verbose', False):
         print(f"-> POST {API_BASE}/files/journal/")
     with open(file_path, 'rb') as f:
-        resp = requests.post(
+        response, error = safe_request(
+            requests.post,
             f"{API_BASE}/files/journal/",
             files={'xml': f},
             headers=HEADERS,
             timeout=30
         )
-    if getattr(args, 'verbose', False):
-        print(f"<- {resp.status_code} {resp.reason}")
+    if getattr(args, 'verbose', False) and response:
+        print(f"<- {response.status_code} {response.reason}")
+
+    if error:
+        print(
+            f"ERROR: network request failed while uploading {Path(file_path).name}: "
+            f"{error}"
+        )
+        sys.exit(1)
+    resp = response
 
     if resp.status_code == 403:
         print("Access denied — check METAFORA_API_KEY in .venv")
@@ -305,14 +348,23 @@ def cmd_status(args):
 
     if args.verbose:
         print(f"-> GET {API_BASE}/files/status/?file_uid={file_uid}")
-    resp = requests.get(
+    response, error = safe_request(
+        requests.get,
         f"{API_BASE}/files/status/",
         params={'file_uid': file_uid},
         headers=HEADERS,
         timeout=30
     )
-    if args.verbose:
-        print(f"<- {resp.status_code} {resp.reason}")
+    if args.verbose and response:
+        print(f"<- {response.status_code} {response.reason}")
+
+    if error:
+        print(
+            f"ERROR: network request failed while checking status: "
+            f"{error}"
+        )
+        sys.exit(1)
+    resp = response
 
     if resp.status_code == 403:
         print("Access denied — check METAFORA_API_KEY in .venv")
@@ -352,33 +404,57 @@ def cmd_status(args):
 
 
 def sign_all(file_uid, article_uids, verbose=False):
-    signed_count = 0
-    total = len(article_uids)
+    result = SignResult(
+        attempted=len(article_uids),
+        signed=0,
+        failed=0,
+    )
+
     for article_uid in article_uids:
         if verbose:
-            print(f"-> PUT {API_BASE}/publications/{article_uid}/sign/")
-        resp = requests.put(
+            print(f"- PUT {API_BASE}/publications/{article_uid}/sign/")
+
+        response, error = safe_request(
+            requests.put,
             f"{API_BASE}/publications/{article_uid}/sign/",
             headers=HEADERS,
-            timeout=30
+            timeout=30,
         )
+
+        if error:
+            print(
+                f"ERROR: network request failed for article {article_uid}: "
+                f"{error}"
+            )
+            result.failed += 1
+            continue
+
         if verbose:
-            print(f"<- {resp.status_code} {resp.reason}")
-        if resp.status_code == 200:
-            print(f"  Signed: {article_uid}")
-            signed_count += 1
-        elif resp.status_code == 409:
-            print(f"  Already signed: {article_uid}")
-            signed_count += 1
+            print(f"- {response.status_code} {response.reason}")
+
+        if response.status_code == 200:
+            print(f"Signed: {article_uid}")
+            result.signed += 1
+        elif response.status_code == 409:
+            print(f"Already signed: {article_uid}")
+            result.signed += 1
         else:
-            body = resp.text
+            body = response.text
             try:
-                body = json.dumps(resp.json())
-            except Exception:
+                body = json.dumps(response.json())
+            except (ValueError, TypeError):
                 pass
-            print(f"  ERROR: {resp.status_code} {body}")
-    print(f"Signed {signed_count}/{total} articles")
-    return signed_count
+            print(
+                f"ERROR: signing article {article_uid} failed "
+                f"with HTTP {response.status_code}: {body}"
+            )
+            result.failed += 1
+
+    print(
+        f"Signed {result.signed}/{result.attempted} articles; "
+        f"{result.failed} failed"
+    )
+    return result
 
 
 def cmd_sign(args):
@@ -395,14 +471,22 @@ def cmd_sign(args):
     if not article_uids:
         if args.verbose:
             print(f"-> GET {API_BASE}/files/status/?file_uid={file_uid}")
-        resp = requests.get(
+        response, error = safe_request(
+            requests.get,
             f"{API_BASE}/files/status/",
             params={'file_uid': file_uid},
             headers=HEADERS,
             timeout=30
         )
-        if args.verbose:
-            print(f"<- {resp.status_code} {resp.reason}")
+        if args.verbose and response:
+            print(f"<- {response.status_code} {response.reason}")
+        if error:
+            print(
+                f"ERROR: network request failed while checking status: "
+                f"{error}"
+            )
+            sys.exit(1)
+        resp = response
         if resp.status_code == 200:
             data = resp.json().get('data', {})
             article_uids = [str(a) for a in (data.get('articles') or [])]
@@ -414,7 +498,13 @@ def cmd_sign(args):
         print("ERROR: No article UIDs found. Ensure the file is processed first.")
         sys.exit(1)
 
-    sign_all(file_uid, article_uids, verbose=args.verbose)
+    result = sign_all(file_uid, article_uids, verbose=args.verbose)
+    if result.failed > 0:
+        print(
+            f"Incomplete: {result.signed}/{result.attempted} signed, "
+            f"{result.failed} failed"
+        )
+        sys.exit(1)
 
 
 def cmd_sign_all(args):
@@ -466,12 +556,18 @@ def cmd_sign_all(args):
             skipped += 1
             continue
         print(f"\n--- Signing: {Path(fpath_str).name} ({len(article_uids)} articles) ---")
-        count = sign_all(entry['file_uid'], article_uids, verbose=args.verbose)
-        total_articles += count
+        result = sign_all(entry['file_uid'], article_uids, verbose=args.verbose)
+        total_articles += result.signed
         signed_files += 1
+        if result.failed > 0:
+            signed_files -= 1
 
-    print(f"\nSign-all complete: {signed_files}/{total} files, "
-          f"{total_articles} articles signed, {skipped} skipped")
+    incomplete = total - signed_files - skipped
+    print(f"\nSign-all complete: {signed_files}/{total} files complete, "
+          f"{total_articles} articles signed, {skipped} skipped, "
+          f"{incomplete} incomplete")
+    if incomplete > 0:
+        sys.exit(1)
 
 
 def cmd_delete(args):
@@ -482,13 +578,22 @@ def cmd_delete(args):
 
     if args.verbose:
         print(f"-> DELETE {API_BASE}/files/{file_uid}")
-    resp = requests.delete(
+    response, error = safe_request(
+        requests.delete,
         f"{API_BASE}/files/{file_uid}",
         headers=HEADERS,
         timeout=30
     )
-    if args.verbose:
-        print(f"<- {resp.status_code} {resp.reason}")
+    if args.verbose and response:
+        print(f"<- {response.status_code} {response.reason}")
+
+    if error:
+        print(
+            f"ERROR: network request failed while deleting {file_uid}: "
+            f"{error}"
+        )
+        sys.exit(1)
+    resp = response
 
     if resp.status_code == 204:
         print(f"Deleted: {file_uid}")
@@ -515,14 +620,23 @@ def cmd_check_doi(args):
     doi = args.DOI
     if args.verbose:
         print(f"-> GET {API_BASE}/publications/doi/{doi}")
-    resp = requests.get(
+    response, error = safe_request(
+        requests.get,
         f"{API_BASE}/publications/doi/{doi}",
         params={'public': 'true'},
         headers=HEADERS,
         timeout=30
     )
-    if args.verbose:
-        print(f"<- {resp.status_code} {resp.reason}")
+    if args.verbose and response:
+        print(f"<- {response.status_code} {response.reason}")
+
+    if error:
+        print(
+            f"ERROR: network request failed while checking DOI {doi}: "
+            f"{error}"
+        )
+        sys.exit(1)
+    resp = response
 
     if resp.status_code == 403:
         print("Access denied — check METAFORA_API_KEY in .venv")
@@ -611,14 +725,24 @@ def cmd_upload_all(args):
         if args.verbose:
             print(f"-> POST {API_BASE}/files/journal/")
         with open(fpath_str, 'rb') as f:
-            resp = requests.post(
+            response, error = safe_request(
+                requests.post,
                 f"{API_BASE}/files/journal/",
                 files={'xml': f},
                 headers=HEADERS,
                 timeout=30
             )
-        if args.verbose:
-            print(f"<- {resp.status_code} {resp.reason}")
+        if args.verbose and response:
+            print(f"<- {response.status_code} {response.reason}")
+
+        if error:
+            print(
+                f"ERROR: network request failed while uploading {Path(fpath_str).name}: "
+                f"{error}"
+            )
+            failed += 1
+            continue
+        resp = response
 
         if resp.status_code == 403:
             print("Access denied — check METAFORA_API_KEY in .venv")
@@ -638,8 +762,15 @@ def cmd_upload_all(args):
                 article_uids = result['article_uids']
                 success += 1
                 processed_articles += len(article_uids)
-                signed_count = result.get('signed_count', 0)
-                signed_articles += signed_count
+                sign_result = result.get('sign_result')
+                if sign_result:
+                    signed_articles += sign_result.signed
+                    if sign_result.failed > 0:
+                        success -= 1
+                        failed += 1
+                else:
+                    signed_count = result.get('signed_count', 0)
+                    signed_articles += signed_count
             continue
         if resp.status_code == 422:
             body = resp.json()
@@ -696,8 +827,11 @@ def cmd_upload_all(args):
             success += 1
             processed_articles += len(article_uids)
             if sign:
-                signed_count = sign_all(file_uid, article_uids, verbose=args.verbose)
-                signed_articles += signed_count
+                sign_result = sign_all(file_uid, article_uids, verbose=args.verbose)
+                signed_articles += sign_result.signed
+                if sign_result.failed > 0:
+                    success -= 1
+                    failed += 1
         else:
             print(f"  FAILED: {Path(fpath_str).name}")
             failed += 1
@@ -713,6 +847,8 @@ def cmd_upload_all(args):
     print(f"Recovered (409)    : {recovered_409} files")
     print(f"Failed             : {failed} files")
     print(f"================================================")
+    if failed > 0:
+        sys.exit(1)
 
 
 def main():

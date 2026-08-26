@@ -8,7 +8,8 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from unittest.mock import MagicMock, patch
+import requests
+from unittest.mock import MagicMock, patch, Mock
 
 from src.metafora_client import (
     load_log,
@@ -19,9 +20,13 @@ from src.metafora_client import (
     cmd_upload,
     cmd_upload_all,
     cmd_sign_all,
+    cmd_check_doi,
     handle_upload_409,
     resolve_file_uid,
     get_upload_log_path,
+    safe_request,
+    sign_all,
+    SignResult,
 )
 from src.output_paths import default_output_dir
 
@@ -348,7 +353,7 @@ class TestMetaforaClientSourceIsolation(unittest.TestCase):
             xml_path = tmp_path / "mathem_n1.xml"
             xml_path.write_text("<article/>", encoding="utf-8")
             log_path = tmp_path / "karrc" / "upload_log.json"
-            log_path.parent.mkdir(parents=True)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
 
             log_data = {}
 
@@ -539,6 +544,350 @@ class TestRawFileUIDResolution(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             resolve_file_uid(str(xml_path), log_data, verbose=False)
         self.assertEqual(cm.exception.code, 1)
+
+
+class TestMetaforaClientSafeRequest(unittest.TestCase):
+    """Tests for safe_request helper function."""
+
+    @patch('src.metafora_client.requests.get')
+    def test_safe_request_success(self, mock_get):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+        mock_get.return_value = mock_response
+
+        response, error = safe_request(
+            requests.get, "https://example.com", headers={}, timeout=30
+        )
+
+        self.assertIsNotNone(response)
+        self.assertIsNone(error)
+        mock_get.assert_called_once()
+
+    @patch('src.metafora_client.requests.get')
+    def test_safe_request_connection_error(self, mock_get):
+        mock_get.side_effect = requests.exceptions.ConnectionError("Connection reset")
+
+        response, error = safe_request(
+            requests.get, "https://example.com", headers={}, timeout=30
+        )
+
+        self.assertIsNone(response)
+        self.assertIsNotNone(error)
+        self.assertIn("Connection reset", error)
+
+    @patch('src.metafora_client.requests.get')
+    def test_safe_request_timeout(self, mock_get):
+        mock_get.side_effect = requests.exceptions.Timeout("Request timeout")
+
+        response, error = safe_request(
+            requests.get, "https://example.com", headers={}, timeout=30
+        )
+
+        self.assertIsNone(response)
+        self.assertIsNotNone(error)
+        self.assertIn("Request timeout", error)
+
+    @patch('src.metafora_client.requests.get')
+    def test_safe_request_non_request_exception_not_swallowed(self, mock_get):
+        mock_get.side_effect = ValueError("Some value error")
+
+        with self.assertRaises(ValueError) as cm:
+            safe_request(
+                requests.get, "https://example.com", headers={}, timeout=30
+            )
+        self.assertIn("Some value error", str(cm.exception))
+
+
+class TestMetaforaClientSignAll(unittest.TestCase):
+    """Tests for sign_all function with network resilience."""
+
+    @patch('src.metafora_client.requests.put')
+    def test_sign_all_network_failure_then_success(self, mock_put):
+        from src.metafora_client import safe_request
+        mock_put.side_effect = [
+            requests.exceptions.ConnectionError("reset"),
+            Mock(status_code=200),
+        ]
+
+        result = sign_all(
+            "file-uid-123",
+            ["art-001", "art-002"],
+            verbose=False
+        )
+
+        self.assertEqual(result.attempted, 2)
+        self.assertEqual(result.signed, 1)
+        self.assertEqual(result.failed, 1)
+
+    @patch('src.metafora_client.requests.put')
+    def test_sign_all_http_409_counts_as_signed(self, mock_put):
+        mock_response = Mock()
+        mock_response.status_code = 409
+        mock_response.text = "Conflict"
+        mock_put.return_value = mock_response
+
+        result = sign_all(
+            "file-uid-123",
+            ["art-001"],
+            verbose=False
+        )
+
+        self.assertEqual(result.signed, 1)
+        self.assertEqual(result.failed, 0)
+
+    @patch('src.metafora_client.requests.put')
+    def test_sign_all_unexpected_http_status_counts_as_failed(self, mock_put):
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.json.return_value = {'error': 'server_error'}
+        mock_put.return_value = mock_response
+
+        result = sign_all(
+            "file-uid-123",
+            ["art-001"],
+            verbose=False
+        )
+
+        self.assertEqual(result.failed, 1)
+
+    @patch('src.metafora_client.requests.put')
+    def test_sign_all_no_real_network_used(self, mock_put):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+        mock_put.return_value = mock_response
+
+        sign_all("file-uid-123", ["art-001"], verbose=False)
+
+        self.assertTrue(mock_put.called)
+        mock_put.assert_called_once()
+
+
+class TestMetaforaClientCmdSignAll(unittest.TestCase):
+    """Tests for cmd_sign_all with partial failure handling."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+
+    @patch('src.metafora_client.load_log')
+    @patch('src.metafora_client.get_upload_log_path')
+    @patch('src.metafora_client.resolve_batch_output_dir')
+    @patch('src.metafora_client.requests.put')
+    def test_cmd_sign_all_partial_network_failure_continues(self, mock_put, mock_resolve_dir, mock_get_log_path, mock_load_log):
+        tmpdir = Path(self.tmpdir.name)
+        batch_dir = tmpdir / "mgta" / "2022"
+        batch_dir.mkdir(parents=True)
+
+        karrc_log_path = tmpdir / "karrc" / "upload_log.json"
+        karrc_log_path.parent.mkdir(parents=True, exist_ok=True)
+        mgta_log_path = tmpdir / "mgta" / "upload_log.json"
+        mgta_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        xml_file_1 = batch_dir / "mathem_n1.xml"
+        xml_file_1.write_text("<article/>")
+        xml_file_2 = batch_dir / "mathem_n2.xml"
+        xml_file_2.write_text("<article/>")
+
+        karrc_log_data = {
+            str(xml_file_1.resolve()): {
+                'file_uid': 'file-1',
+                'status_code': 3,
+                'article_uids': ['art-1', 'art-2'],
+            },
+            str(xml_file_2.resolve()): {
+                'file_uid': 'file-2',
+                'status_code': 3,
+                'article_uids': ['art-3'],
+            },
+        }
+
+        mock_resolve_dir.return_value = batch_dir
+        mock_get_log_path.side_effect = lambda source: karrc_log_path
+
+        def side_effect(path):
+            if 'karrc' in str(path):
+                return karrc_log_data
+            return {}
+        mock_load_log.side_effect = side_effect
+
+        put_calls = [
+            Mock(status_code=200),
+            requests.exceptions.ConnectionError("network down"),
+            Mock(status_code=200),
+        ]
+        mock_put.side_effect = put_calls
+
+        args = MagicMock()
+        args.YEAR_OR_DIR = "2022"
+        args.journal = None
+        args.source = "karrc"
+        args.verbose = False
+
+        with patch('sys.stdout'):
+            with self.assertRaises(SystemExit) as cm:
+                cmd_sign_all(args)
+            self.assertEqual(cm.exception.code, 1)
+
+    @patch('src.metafora_client.load_log')
+    @patch('src.metafora_client.get_upload_log_path')
+    @patch('src.metafora_client.resolve_batch_output_dir')
+    @patch('src.metafora_client.requests.put')
+    def test_cmd_sign_all_all_signed_succeeds(self, mock_put, mock_resolve_dir, mock_get_log_path, mock_load_log):
+        tmpdir = Path(self.tmpdir.name)
+        batch_dir = tmpdir / "mgta" / "2022"
+        batch_dir.mkdir(parents=True)
+
+        mgta_log_path = tmpdir / "mgta" / "upload_log.json"
+        mgta_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        xml_file = batch_dir / "mathem_n1.xml"
+        xml_file.write_text("<article/>")
+
+        log_data = {
+            str(xml_file.resolve()): {
+                'file_uid': 'file-uid',
+                'status_code': 3,
+                'article_uids': ['art-001'],
+            }
+        }
+
+        mock_resolve_dir.return_value = batch_dir
+        mock_get_log_path.return_value = mgta_log_path
+        mock_load_log.return_value = log_data
+        mock_put.return_value.status_code = 200
+
+        args = MagicMock()
+        args.YEAR_OR_DIR = "2022"
+        args.journal = None
+        args.source = "mgta"
+        args.verbose = False
+
+        with patch('sys.stdout'):
+            cmd_sign_all(args)
+
+
+class TestMetaforaClientNetworkFailure(unittest.TestCase):
+    """Tests for network error handling in various commands."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+
+    @patch('src.metafora_client.resolve_file_uid')
+    @patch('src.metafora_client.requests.post')
+    def test_cmd_upload_network_failure(self, mock_post, mock_resolve_file_uid):
+        mock_resolve_file_uid.return_value = ("file-uid", None)
+        mock_post.side_effect = requests.exceptions.ConnectionError("network down")
+
+        args = MagicMock()
+        args.FILE = "/tmp/test.xml"
+        args.source = "karrc"
+        args.verbose = False
+        args.max_wait = 300
+        args.poll_interval = 5
+        args.sign = False
+        args.no_wait = False
+
+        with patch('builtins.open', MagicMock()):
+            with self.assertRaises(SystemExit) as cm:
+                cmd_upload(args)
+            self.assertEqual(cm.exception.code, 1)
+
+    @patch('src.metafora_client.resolve_file_uid')
+    @patch('src.metafora_client.requests.get')
+    def test_cmd_status_network_failure(self, mock_get, mock_resolve_file_uid):
+        mock_resolve_file_uid.return_value = ("file-uid", None)
+        mock_get.side_effect = requests.exceptions.ConnectionError("network down")
+
+        args = MagicMock()
+        args.FILE_OR_UID = "file-uid"
+        args.source = "karrc"
+        args.verbose = False
+
+        with self.assertRaises(SystemExit) as cm:
+            cmd_status(args)
+            self.assertEqual(cm.exception.code, 1)
+
+    @patch('src.metafora_client.resolve_file_uid')
+    @patch('src.metafora_client.requests.delete')
+    def test_cmd_delete_network_failure(self, mock_delete, mock_resolve_file_uid):
+        mock_resolve_file_uid.return_value = ("file-uid", None)
+        mock_delete.side_effect = requests.exceptions.ConnectionError("network down")
+
+        args = MagicMock()
+        args.FILE_OR_UID = "file-uid"
+        args.source = "karrc"
+        args.verbose = False
+
+        with self.assertRaises(SystemExit) as cm:
+            cmd_delete(args)
+            self.assertEqual(cm.exception.code, 1)
+
+    @patch('src.metafora_client.requests.get')
+    def test_cmd_check_doi_network_failure(self, mock_get):
+        mock_get.side_effect = requests.exceptions.ConnectionError("network down")
+
+        args = MagicMock()
+        args.DOI = "10.1234/test"
+
+        with self.assertRaises(SystemExit) as cm:
+            cmd_check_doi(args)
+        self.assertEqual(cm.exception.code, 1)
+
+
+class TestMetaforaClientBatchUploadContinuation(unittest.TestCase):
+    """Tests for batch upload continuation after transport failures."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+
+    @patch('src.metafora_client.resolve_batch_output_dir')
+    @patch('src.metafora_client.get_upload_log_path')
+    @patch('src.metafora_client.requests.post')
+    @patch('src.metafora_client.poll_status')
+    def test_cmd_upload_all_continues_after_network_failure(self, mock_poll, mock_post, mock_get_log_path, mock_resolve_dir):
+        tmpdir = Path(self.tmpdir.name)
+        batch_dir = tmpdir / "karrc" / "2022"
+        batch_dir.mkdir(parents=True)
+
+        log_path = tmpdir / "karrc" / "upload_log.json"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        xml_file_1 = batch_dir / "mathem_n1.xml"
+        xml_file_1.write_text("<article/>")
+
+        mock_resolve_dir.return_value = batch_dir
+        mock_get_log_path.return_value = log_path
+
+        post_calls = []
+        def side_effect(*args, **kwargs):
+            post_calls.append(1)
+            if len(post_calls) == 1:
+                raise requests.exceptions.ConnectionError("network down")
+            response = Mock(status_code=200)
+            response.json.return_value = {'data': {'file_uid': 'file-uid-2'}}
+            return response
+        mock_post.side_effect = side_effect
+        mock_poll.return_value = ['art-1', 'art-2']
+
+        args = MagicMock()
+        args.YEAR_OR_DIR = "2022"
+        args.journal = None
+        args.source = "karrc"
+        args.verbose = False
+        args.max_wait = 300
+        args.poll_interval = 5
+        args.sign = False
+        args.dry_run = False
+
+        with patch('sys.stdout'):
+            with self.assertRaises(SystemExit) as cm:
+                cmd_upload_all(args)
+            self.assertEqual(cm.exception.code, 1)
 
 
 if __name__ == '__main__':
