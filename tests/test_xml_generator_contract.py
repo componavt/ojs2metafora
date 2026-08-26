@@ -76,6 +76,219 @@ class TestXmlGeneratorContract(unittest.TestCase):
         """Parse article element to text for verification."""
         return etree.tostring(article_elem, encoding='unicode', pretty_print=False)
 
+    def test_surname_case_preservation_russian(self):
+        """Test that Russian surname preserves exact case from OJS."""
+        article_data = self.build_minimal_article_data({
+            'authors': [
+                {
+                    'author_id': 1,
+                    'seq': 1,
+                    'first_name': 'Иван',
+                    'middle_name': 'Иванович',
+                    'last_name': 'Иванов',
+                    'email': 'ivan@example.test',
+                    'country': 'RU',
+                },
+            ],
+        })
+
+        result = build_article_element(article_data)
+
+        self.assertIsNotNone(result)
+        ru_surname = result.xpath(
+            "string(authors/author/individInfo[@lang='ru']/surname)"
+        )
+        self.assertEqual(ru_surname, "Иванов")
+        self.assertNotEqual(ru_surname, "ИВАНОВ")
+
+    def test_surname_case_preservation_english(self):
+        """Test that English surname preserves exact case from OJS."""
+        article_data = self.build_minimal_article_data({
+            'authors': [
+                {
+                    'author_id': 2,
+                    'seq': 2,
+                    'first_name': 'Ivan',
+                    'middle_name': '',
+                    'last_name': 'Ivanov',
+                    'email': 'ivan@example.test',
+                    'country': 'RU',
+                },
+            ],
+        })
+
+        result = build_article_element(article_data)
+
+        self.assertIsNotNone(result)
+        en_surname = result.xpath(
+            "string(authors/author/individInfo[@lang='en']/surname)"
+        )
+        self.assertEqual(en_surname, "Ivanov")
+        self.assertNotEqual(en_surname, "IVANOV")
+
+    def test_country_export_russian_author(self):
+        """Test that country is exported in Russian individInfo."""
+        article_data = self.build_minimal_article_data({
+            'authors': [
+                {
+                    'author_id': 1,
+                    'seq': 1,
+                    'first_name': 'Иван',
+                    'middle_name': 'Иванович',
+                    'last_name': 'Иванов',
+                    'email': 'ivan@example.test',
+                    'country': 'RU',
+                },
+            ],
+        })
+
+        result = build_article_element(article_data)
+
+        self.assertIsNotNone(result)
+        ru_country = result.xpath(
+            "string(authors/author/individInfo[@lang='ru']/country)"
+        )
+        self.assertEqual(ru_country, "RU")
+
+    def test_country_export_english_author(self):
+        """Test that country is exported in English individInfo."""
+        article_data = self.build_minimal_article_data({
+            'authors': [
+                {
+                    'author_id': 2,
+                    'seq': 2,
+                    'first_name': 'Ivan',
+                    'middle_name': '',
+                    'last_name': 'Ivanov',
+                    'email': 'ivan@example.test',
+                    'country': 'RU',
+                },
+            ],
+        })
+
+        result = build_article_element(article_data)
+
+        self.assertIsNotNone(result)
+        en_country = result.xpath(
+            "string(authors/author/individInfo[@lang='en']/country)"
+        )
+        self.assertEqual(en_country, "RU")
+
+    def test_country_different_values_preserved_independently(self):
+        """Test that different country values in ru/enauthors are preserved independently."""
+        article_data = self.build_minimal_article_data({
+            'authors': [
+                {
+                    'author_id': 1,
+                    'seq': 1,
+                    'first_name': 'Иван',
+                    'middle_name': 'Иванович',
+                    'last_name': 'Иванов',
+                    'email': 'ivan@example.test',
+                    'country': 'UZ',
+                },
+                {
+                    'author_id': 2,
+                    'seq': 2,
+                    'first_name': 'Ivan',
+                    'middle_name': '',
+                    'last_name': 'Ivanov',
+                    'email': 'ivan@example.test',
+                    'country': 'RU',
+                },
+            ],
+        })
+
+        result = build_article_element(article_data)
+
+        self.assertIsNotNone(result)
+        ru_country = result.xpath(
+            "string(authors/author/individInfo[@lang='ru']/country)"
+        )
+        en_country = result.xpath(
+            "string(authors/author/individInfo[@lang='en']/country)"
+        )
+        self.assertEqual(ru_country, "UZ")
+        self.assertEqual(en_country, "RU")
+
+    def test_missing_country_is_omitted(self):
+        """Test that missing/empty country values result in no <country> element."""
+        article_data = self.build_minimal_article_data({
+            'authors': [
+                {
+                    'author_id': 1,
+                    'seq': 1,
+                    'first_name': 'Иван',
+                    'middle_name': 'Иванович',
+                    'last_name': 'Иванов',
+                    'email': 'ivan@example.test',
+                    'country': None,
+                },
+            ],
+        })
+
+        result = build_article_element(article_data)
+
+        self.assertIsNotNone(result)
+        ru_country_nodes = result.xpath(
+            "authors/author/individInfo[@lang='ru']/country"
+        )
+        self.assertEqual(len(ru_country_nodes), 0)
+
+    def test_whitespace_only_country_is_omitted(self):
+        """Test that whitespace-only country value results in no <country> element."""
+        article_data = self.build_minimal_article_data({
+            'authors': [
+                {
+                    'author_id': 1,
+                    'seq': 1,
+                    'first_name': 'Иван',
+                    'middle_name': 'Иванович',
+                    'last_name': 'Иванов',
+                    'email': 'ivan@example.test',
+                    'country': '   ',
+                },
+            ],
+        })
+
+        result = build_article_element(article_data)
+
+        self.assertIsNotNone(result)
+        ru_country_nodes = result.xpath(
+            "authors/author/individInfo[@lang='ru']/country"
+        )
+        self.assertEqual(len(ru_country_nodes), 0)
+
+    def test_no_town_generated(self):
+        """Test that <town> element is never generated."""
+        article_data = self.build_minimal_article_data({
+            'authors': [
+                {
+                    'author_id': 1,
+                    'seq': 1,
+                    'first_name': 'Иван',
+                    'middle_name': 'Иванович',
+                    'last_name': 'Иванов',
+                    'email': 'ivan@example.test',
+                    'country': 'RU',
+                },
+            ],
+            'author_settings': [
+                {
+                    'author_id': 1,
+                    'setting_name': 'town',
+                    'locale': 'ru_RU',
+                    'setting_value': 'Novosibirsk',
+                },
+            ],
+        })
+
+        result = build_article_element(article_data)
+
+        self.assertIsNotNone(result)
+        town_nodes = result.xpath("authors/author/individInfo/town")
+        self.assertEqual(len(town_nodes), 0)
+
     def test_ojs31_formal_issue_year_publication_date(self):
         """Test that OJS31 uses formal issue year for datePublication."""
         article_data = self.build_minimal_article_data({
@@ -172,9 +385,9 @@ class TestXmlGeneratorContract(unittest.TestCase):
         article_data = self.build_minimal_article_data({
             'article_id': 999,
             'authors': [
-                {'author_id': 1, 'seq': 1, 'first_name': 'Иван', 'last_name': 'Иванов', 'email': '', 'country': ''},
-                {'author_id': 2, 'seq': 2, 'first_name': 'Петр', 'last_name': 'Петров', 'email': '', 'country': ''},
-                {'author_id': 3, 'seq': 3, 'first_name': 'John', 'last_name': 'Smith', 'email': '', 'country': ''},
+                {'author_id': 1, 'seq': 1, 'first_name': 'Иван', 'last_name': 'Иванов', 'email': '', 'country': 'RU'},
+                {'author_id': 2, 'seq': 2, 'first_name': 'Петр', 'last_name': 'Петров', 'email': '', 'country': 'RU'},
+                {'author_id': 3, 'seq': 3, 'first_name': 'John', 'last_name': 'Smith', 'email': '', 'country': 'US'},
             ],
         })
 
@@ -198,8 +411,8 @@ class TestXmlGeneratorContract(unittest.TestCase):
         article_data = self.build_minimal_article_data({
             'article_id': 888,
             'authors': [
-                {'author_id': 1, 'seq': 1, 'first_name': 'Иван', 'last_name': 'Иванов', 'email': '', 'country': ''},
-                {'author_id': 2, 'seq': 2, 'first_name': 'Петр', 'last_name': 'Петров', 'email': '', 'country': ''},
+                {'author_id': 1, 'seq': 1, 'first_name': 'Иван', 'last_name': 'Иванов', 'email': '', 'country': 'RU'},
+                {'author_id': 2, 'seq': 2, 'first_name': 'Петр', 'last_name': 'Петров', 'email': '', 'country': 'RU'},
             ],
         })
 

@@ -201,9 +201,9 @@ def build_article_element(article_data: dict):
             ru_individ_info = etree.SubElement(author_elem, 'individInfo')
             ru_individ_info.set('lang', 'ru')
             
-            # Surname in uppercase
+            # Surname preserve exact case from source
             surname_elem = etree.SubElement(ru_individ_info, 'surname')
-            surname_elem.text = (ru_author.get('last_name') or '').upper()
+            surname_elem.text = ru_author.get('last_name') or ''
             
             # Initials: first_name + middle_name if present
             initials_text = ru_author.get('first_name') or ''
@@ -226,6 +226,12 @@ def build_article_element(article_data: dict):
             email_elem = etree.SubElement(ru_individ_info, 'email')
             email_elem.text = ru_author.get('email') or ''
             
+            # Country
+            ru_country = (ru_author.get('country') or '').strip()
+            if ru_country:
+                country_elem = etree.SubElement(ru_individ_info, 'country')
+                country_elem.text = ru_country
+            
             # Biography in Russian
             ru_bio = author_settings.get(ru_author['author_id'], {}).get('biography', {})
             if isinstance(ru_bio, dict):
@@ -241,9 +247,9 @@ def build_article_element(article_data: dict):
             en_individ_info = etree.SubElement(author_elem, 'individInfo')
             en_individ_info.set('lang', 'en')
             
-            # Surname in uppercase
+            # Surname preserve exact case from source
             surname_elem = etree.SubElement(en_individ_info, 'surname')
-            surname_elem.text = (en_author.get('last_name') or '').upper()
+            surname_elem.text = en_author.get('last_name') or ''
             
             # Initials: first_name + middle_initial if middle_name is present
             initials_text = en_author.get('first_name') or ''
@@ -268,6 +274,12 @@ def build_article_element(article_data: dict):
             # Email
             email_elem = etree.SubElement(en_individ_info, 'email')
             email_elem.text = en_author.get('email') or ''
+            
+            # Country
+            en_country = (en_author.get('country') or '').strip()
+            if en_country:
+                country_elem = etree.SubElement(en_individ_info, 'country')
+                country_elem.text = en_country
             
             # Biography in English
             en_bio = author_settings.get(en_author['author_id'], {}).get('biography', {})

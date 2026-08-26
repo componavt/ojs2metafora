@@ -2,17 +2,23 @@
 
 > *Because manually copy-pasting journal metadata is a crime against humanity.*
 
-Extracts article metadata from an **OJS 2.4** MySQL database, transforms it into
-`journal3.xsd`-compliant XML, and ships it to the
+Extracts article metadata from **OJS 2.4** and **OJS 3.1** MySQL databases,
+transforms it into `journal3.xsd`-compliant XML, and uploads it to the
 [Metafora](https://metafora.rcsi.science/) indexing system (RCSI, Russia) via REST API.
+
+Current source profiles:
+
+- `karrc` — OJS 2.4, «Труды КарНЦ РАН»
+- `mgta` — OJS 3.1, *Mathematical Game Theory and Applications*
 
 Also supports generating a second XML target for **journals.rcsi.science / RCSI elibrary**
 from already-generated Metafora XML and a prepared issue directory.
 
 ## What it does
 
-1. **Reads** issue metadata (articles, authors, abstracts, keywords, citations) directly
-   from the OJS 2.4 MySQL database.
+1. **Reads** issue metadata, articles, authors, abstracts, keywords, DOI,
+   and citations directly from OJS MySQL databases through source-specific adapters:
+   OJS 2.4 for `karrc` and OJS 3.1 for `mgta`.
 2. **Generates** a `journal3.xsd`-compliant XML file ready for Metafora.
 3. **Uploads** the XML to Metafora via REST API, polls for processing status,
    and optionally signs all publications in one go.
@@ -55,24 +61,30 @@ ojs2metafora/
 ├── schemas/
 │   └── journal3.xsd        # Metafora XSD schema (copy here manually once)
 ├── src/
+│   ├── adapters/
+│   │   ├── __init__.py     # Adapter factory selected by source profile
+│   │   ├── base.py         # Normalized metadata contract
+│   │   ├── ojs24.py        # OJS 2.4 / KarRC adapter
+│   │   └── ojs31.py        # OJS 3.1 / MGTA adapter
 │   ├── main.py             # Entry point: generate XML for a given issue
 │   ├── issue_builder.py    # Assembles the full issue XML tree
 │   ├── xml_generator.py    # Converts article_data dict → <article> XML element
 │   ├── fetch_article.py    # Fetches all metadata for a single article from the DB
-│   ├── db_connector.py     # MySQL connection helper (reads .env)
+│   ├── db_connector.py     # MySQL connection helper for selected source profile
+│   ├── output_paths.py     # Source-namespaced output and upload-log paths
 │   ├── validator.py        # Validates generated XML against journal3.xsd
 │   ├── metafora_client.py  # CLI client for the Metafora REST API
 │   ├── explore_db.py       # Interactive DB explorer / sanity checker
 │   ├── generate_all.py     # Batch XML generation for all issues
 │   ├── xml2elibrary.py     # Convert Metafora XML → RCSI elibrary XML
-│   └── run_test.sh         # Developer smoke-test script (chmod +x applied)
+│   └── run_test.sh         # Developer smoke-test script
 └── output/
     ├── karrc/
     │   ├── upload_log.json
     │   └── 2025/
     │       └── mathem_n4.xml
     └── mgta/
-        ├── upload_log.json
+        ├── upload_log.json # Created after the first successful MGTA upload
         └── 2022/
             └── mgta_n1.xml
 ```
@@ -169,7 +181,7 @@ python3 src/metafora_client.py upload-all 2022 --source mgta --sign
 
 # Upload only one journal series
 python3 src/metafora_client.py upload-all 2025 --source karrc --journal mathem --sign
-python3 src/metafora_client.py upload-all 2022 --source mgta --journal mgta --sign
+python3 src/metafora_client.py upload-all 2022 --source mgta --sign
 
 # Preview which files would be uploaded (no actual upload)
 python3 src/metafora_client.py upload-all 2025 --source karrc --dry-run
@@ -213,7 +225,7 @@ python3 src/metafora_client.py sign-all 2022 --source mgta
 
 # Sign only one journal series
 python3 src/metafora_client.py sign-all 2025 --source karrc --journal mathem
-python3 src/metafora_client.py sign-all 2022 --source mgta --journal mgta
+python3 src/metafora_client.py sign-all 2022 --source mgta
 ```
 
 > `sign-all` is idempotent: already-signed articles return HTTP 409,
@@ -275,6 +287,49 @@ python3 src/metafora_client.py upload output/mgta/2022/mgta_n1.xml --source mgta
 python3 src/metafora_client.py sign output/karrc/2025/mathem_n4.xml --source karrc
 python3 src/metafora_client.py sign output/mgta/2022/mgta_n1.xml --source mgta
 ```
+
+### First upload for a new source or issue
+
+For the first XML from a new source, upload one issue **without** `--sign`,
+wait for processing, review the issue in the Metafora web interface, and only
+then sign its publications.
+
+Example: MGTA, volume 17, issue 3, 2025:
+
+```bash
+# 1. Validate the already generated XML locally.
+python3 - <<'PY'
+from src.validator import validate_xml
+raise SystemExit(
+    0 if validate_xml(
+        "output/mgta/2025/mgta_n3.xml",
+        "schemas/journal3.xsd",
+    ) else 1
+)
+PY
+
+# 2. Upload XML, wait until Metafora processes it, but do not sign yet.
+python3 src/metafora_client.py \
+    upload output/mgta/2025/mgta_n3.xml \
+    --source mgta \
+    --verbose
+
+# 3. Confirm server-side processing and article count.
+python3 src/metafora_client.py \
+    status output/mgta/2025/mgta_n3.xml \
+    --source mgta
+
+# 4. Review the issue in the Metafora web interface.
+
+# 5. Sign only after the review is satisfactory.
+python3 src/metafora_client.py \
+    sign output/mgta/2025/mgta_n3.xml \
+    --source mgta \
+    --verbose
+```
+
+After a successful upload, the client writes the server file UID, processing
+status, and article UIDs to `output/mgta/upload_log.json`.
 
 ---
 
